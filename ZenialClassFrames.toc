@@ -1,0 +1,38 @@
+## Interface: 16001
+## Title: ZenialClassFrames
+## Notes: Class colors, optional class portraits and stun countdowns, health/resource texts, readability and compatibility diagnostics
+## Notes-deDE: Klassenfarben, optionale Klassenportraits und Stun-Ablaufanzeigen, HP-/Ressourcentexte, Lesbarkeit und Kompatibilitätsdiagnose
+## Author: ZENIAL
+## Version: 1.7.0
+## SavedVariables: ZenialClassFramesDB
+## IconTexture: Interface\AddOns\ZenialClassFrames\Media\Icon.tga
+## X-License: MIT
+
+Theme.lua
+Util.lua
+CommandOutput.lua
+ConflictMonitor.lua
+Nameplates.lua
+NameplateTalents.lua
+NameplateRoles.lua
+NameColors.lua
+Portraits.lua
+Stuns.lua
+BarTextLocale.lua
+BarText.lua
+BarTextDisplay.lua
+BarTextUpdate.lua
+BarTextEntries.lua
+Readability.lua
+BarTextSettings.lua
+SettingsUI.lua
+ConfigWizard.lua
+Setup.lua
+FrameSettings.lua
+PartyLevel.lua
+UnitFrames.lua
+ModuleInit.lua
+Commands.lua
+Main.lua
+Launcher.lua
+LauncherSpec.lua
