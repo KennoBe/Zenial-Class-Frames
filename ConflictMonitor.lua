@@ -236,6 +236,10 @@ function M.Status(id,scope)
 end
 function M.Diagnostics()
     local out={}
+    local function levelStateText(values)
+        return "font="..tostring(values[1]).."; fontSize="..tostring(values[2]).."; flags="..tostring(values[3])..
+            "; size="..tostring(values[4]).."x"..tostring(values[5])
+    end
     for _,id in ipairs(modules) do
         local scopes=(id=="nativeHealth" or id=="portraits" or id=="stuns") and {"player","target","party"} or
             (id=="partyLevel" and {"party"} or (id=="barText" and NS.BarText.Categories or {"nameplates"}))
@@ -244,6 +248,14 @@ function M.Diagnostics()
             out[#out+1]=tr(unpack(names[id])).." / "..scope..": "..tr(unpack(statusNames[s.state]))..
                 " ["..s.state.."; "..s.reason.."; "..s.property.."; checked="..s.checked.."]"..
                 (reasons[s.reason] and " "..tr(unpack(reasons[s.reason])) or "")
+            if id=="partyLevel" then
+                local state=slot(id,scope);local suspect=state.suspect
+                local record=suspect and state.records[suspect.key]
+                if record and suspect.reason=="observed_change" and type(record.expected)=="table" and type(suspect.sample)=="table" then
+                    out[#out+1]="Group level evidence / "..scope..": unit="..tostring(record.unit)..
+                        "; expected={"..levelStateText(record.expected).."}; observed={"..levelStateText(suspect.sample).."}"
+                end
+            end
         end
     end
     for _,name in ipairs({"BetterBlizzFrames","EnhancedClassIconPortraits","ClassicClassIconPortraits"}) do
