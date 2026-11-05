@@ -34,6 +34,18 @@ local function equal(a,b)
     return true
 end
 M.Equal=equal
+local function equalState(id,a,b)
+    if id~="partyLevel" or type(a)~="table" or type(b)~="table" or #a~=5 or #b~=5 then return equal(a,b) end
+    -- Anchored circle bounds jitter when client layout is recomputed after
+    -- reload. Allow 0.001 UI units only for width/height; preserve raw evidence,
+    -- font checks and every other module's existing comparison tolerance.
+    for i=1,5 do
+        if i>=4 and type(a[i])=="number" and type(b[i])=="number" then
+            if not (math.abs(a[i]-b[i])<=.001) then return false end
+        elseif not equal(a[i],b[i]) then return false end
+    end
+    return true
+end
 local function now()
     if type(GetTime)=="function" then local ok,t=pcall(GetTime);if ok and readable(t) and type(t)=="number" then return t end end
     return 0
@@ -99,7 +111,7 @@ function M.Owns(id,scope,key)
     local s=slot(id,scope);local r=s.records[key]
     if not r or not r.expected then return false end
     if r.resolve then local ok,object=pcall(r.resolve);if not ok or not readable(object) or object~=r.object then return false end end
-    return equal(M.Read(r.object,r.getter),r.expected)
+    return equalState(id,M.Read(r.object,r.getter),r.expected)
 end
 local function pause(s,reason,property)
     if s.state=="conflict_paused" then return end
@@ -117,7 +129,7 @@ function M.Signal(id,scope,reason,property,key,sample)
     if s.state=="conflict_paused" then return end
     key=key or s
     local previous=s.observations[key]
-    local count=previous and previous.key==key and previous.reason==reason and equal(previous.sample,sample) and previous.count+1 or 1
+    local count=previous and previous.key==key and previous.reason==reason and equalState(id,previous.sample,sample) and previous.count+1 or 1
     s.suspect={key=key,reason=reason,sample=sample and clone(sample),count=count}
     s.observations[key]=s.suspect;s.stable=0
     s.state,s.reason,s.property="unavailable","unconfirmed",property
@@ -152,7 +164,7 @@ function M.Before(id,scope,key,object,getter,unit,native,resolve)
     if native and r then s.records[key]=nil end
     local current=M.Read(object,getter)
     if not current then M.Unavailable(id,scope,object and "restricted" or "missing");return false end
-    if r and r.expected and not native and not equal(current,r.expected) then
+    if r and r.expected and not native and not equalState(id,current,r.expected) then
         M.Signal(id,scope,"observed_change",r.property,key,current);return false
     end
     -- A verified native update refreshes baseline ownership without accusing
@@ -168,7 +180,7 @@ function M.Track(id,scope,key,object,getter,expected,property,unit,release,resol
     s.records[key]=r
     local current=M.Read(object,getter)
     if not current then M.Unavailable(id,scope);return false end
-    if not equal(current,r.expected) then M.Signal(id,scope,"observed_change",property,key,current);return false end
+    if not equalState(id,current,r.expected) then M.Signal(id,scope,"observed_change",property,key,current);return false end
     s.state,s.reason="active","";s.checked=now()
     return true
 end
@@ -205,7 +217,7 @@ function M.Audit()
             end
             local current=M.Read(r.object,r.getter)
             if not current then allStable=false;M.Unavailable(s.id,s.scope)
-            elseif not equal(current,r.expected) then allStable=false;M.Signal(s.id,s.scope,"observed_change",r.property,key,current)
+            elseif not equalState(s.id,current,r.expected) then allStable=false;M.Signal(s.id,s.scope,"observed_change",r.property,key,current)
             elseif not s.suspect and s.state~="conflict_paused" then s.state,s.reason="active","" end
         end
         if allStable and any and s.suspect and (s.state~="conflict_paused" or now()-s.since>=10) then
