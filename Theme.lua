@@ -3,16 +3,7 @@ local addonName, private = ...
 -- Shared, client-native skin. Canonical source: _dev/shared/Theme.lua (synced by _dev/tools/sync_shared.py); do not edit the addon copies.
 local T = {
     version = 3,
-    colors = {
-        shell = {.075, .045, .025, .995}, sidebar = {.105, .066, .035, .995},
-        surface = {.145, .092, .048, .985}, inset = {.045, .031, .021, .99},
-        parchment = {.22, .145, .066, .97}, border = {.72, .49, .18, 1},
-        borderSoft = {.39, .27, .105, .95}, gold = {1, .80, .27, 1},
-        text = {.96, .90, .76, 1}, muted = {.70, .64, .54, 1},
-        red = {.50, .035, .018, .98}, redHover = {.68, .075, .035, .98},
-        green = {.18, .68, .26, 1}, danger = {.76, .08, .035, 1},
-        blue = {.11, .30, .54, .62}, disabled = {.19, .18, .17, .94},
-    },
+    colors = {}, -- derived from T.palette below
     assets = {
         background = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
         tooltipBackground = "Interface\\Tooltips\\UI-Tooltip-Background",
@@ -39,8 +30,8 @@ local T = {
     },
 }
 
--- Central named palette (additive; nothing above reads it). Every colour a skin adds on top of
--- T.colors/T.assets must come from here, so one hue change is a change in this table only.
+-- Central named palette ("stone and gold"). T.colors is derived from it and every colour a skin adds
+-- must come from here, so one hue change is a change in this table only.
 -- Values are "#rrggbb" hex plus an optional alpha; PaletteColor/PaletteHex/Tint/SetGradient resolve them.
 local function hex(value, alpha)
     local r, g, b = value:match("^#?(%x%x)(%x%x)(%x%x)$")
@@ -48,35 +39,46 @@ local function hex(value, alpha)
 end
 T.palette = {
     -- surfaces
-    bg = hex("#0a0c0d"), bgGlow = hex("#18201f"), side = hex("#0c0f10"), panel = hex("#111517"), panelRaised = hex("#1a1f1f"),
-    row = hex("#15191b"), inset = hex("#090b0c"),
+    bg = hex("#100e0b"), bgGlow = hex("#221d14"), side = hex("#15120e"), panel = hex("#1b1812"), panelRaised = hex("#29241a"),
+    row = hex("#231f17"), inset = hex("#0b0a07"),
     -- lines
-    edge = hex("#6f5a30"), edgeDeep = hex("#3b3018"), line = hex("#23292a"), lineSoft = hex("#1d2224"), fieldEdge = hex("#3a3a30"),
+    edge = hex("#8f7433"), edgeDeep = hex("#4a3b1a"), line = hex("#3a3222"), lineSoft = hex("#2c261a"), fieldEdge = hex("#4a4130"),
     -- gold accent
-    gold = hex("#f2c75c"), goldDim = hex("#a8894a"), goldBright = hex("#ffd76a"), goldText = hex("#fff1c9"),
-    goldFillTop = hex("#6d5420"), goldFillBottom = hex("#46340f"), goldEdge = hex("#c69c45"),
+    gold = hex("#ffd100"), goldDim = hex("#b3944a"), goldBright = hex("#ffe05c"), goldText = hex("#fff1c9"),
+    -- primary button (Blizzard red with a gold edge)
+    primaryTop = hex("#8c1616"), primaryBottom = hex("#560c0c"), primaryEdge = hex("#c9a227"),
     -- text
-    text = hex("#ece6d6"), textSoft = hex("#c9c3b2"), dim = hex("#8e9894"), muted = hex("#7c827f"),
-    -- state
-    online = hex("#3ee06a"), danger = hex("#b3261a"), dangerTop = hex("#7a1a10"), dangerBottom = hex("#4a120c"), dangerEdge = hex("#b3261a"),
-    disabled = hex("#171b1d"), disabledText = hex("#5d6563"),
+    text = hex("#f1ead8"), textSoft = hex("#d3cab5"), dim = hex("#a79c84"), muted = hex("#8e8570"),
+    -- state (danger stays dark with a red edge and red text, so it cannot be mistaken for a primary button)
+    online = hex("#3ee06a"), danger = hex("#c23b2a"), dangerTop = hex("#2a1512"), dangerBottom = hex("#1a0d0b"), dangerEdge = hex("#c23b2a"), dangerText = hex("#ff8a73"),
+    disabled = hex("#1d1a14"), disabledText = hex("#6b6353"),
     -- secondary button
-    btnTop = hex("#22282a"), btnBottom = hex("#171b1d"), btnEdge = hex("#4a4433"),
+    btnTop = hex("#2c261b"), btnBottom = hex("#1f1b13"), btnEdge = hex("#57492a"),
+    -- notice strip
+    noticeBg = hex("#2a2008"),
     -- layer (blue accent)
-    accentBlue = hex("#9fc7d8"), accentBlueBg = hex("#0d171b"), accentBlueEdge = hex("#2f4b57"),
+    accentBlue = hex("#8fc8e8"), accentBlueBg = hex("#0e181d"), accentBlueEdge = hex("#365566"),
     -- chips (private categories)
-    chipBg = hex("#0b0e0f"), chipEdge = hex("#3d3a2c"), chipOnBg = hex("#3a2f12"), chipOnEdge = hex("#c69c45"), chipOnText = hex("#ffe3a0"),
+    chipBg = hex("#0e0c09"), chipEdge = hex("#4a4130"), chipOnBg = hex("#3d2f0a"), chipOnEdge = hex("#c9a227"), chipOnText = hex("#ffe59a"),
     -- same-guild marker and success toast
     guildText = hex("#cfe3a8"), guildBg = hex("#16200f"), guildEdge = hex("#56703a"),
     toastBg = hex("#141a12"), toastEdge = hex("#3c6b2c"), toastText = hex("#b9f0a0"),
     -- overlays (alpha carries the strength; blend with ADD for highlights)
-    hover = hex("#f2c75c", .07), selectTop = hex("#f2c75c", .16), selectBottom = hex("#f2c75c", .02),
+    hover = hex("#ffd100", .07), selectTop = hex("#ffd100", .16), selectBottom = hex("#ffd100", .02),
 }
 
 function T.PaletteColor(key, alpha)
     local c = T.palette[key] or T.palette.text
     return c[1], c[2], c[3], alpha or c[4]
 end
+
+-- Every consumer of T.colors reads the palette.
+local function setColor(name, key, alpha) T.colors[name] = { T.PaletteColor(key, alpha) } end
+setColor("shell", "bg", .995); setColor("sidebar", "side", .995); setColor("surface", "panel", .985)
+setColor("inset", "inset", .99); setColor("parchment", "panel", .98); setColor("border", "edge")
+setColor("borderSoft", "line"); setColor("gold", "gold"); setColor("text", "text"); setColor("muted", "dim")
+setColor("red", "primaryBottom", .9); setColor("redHover", "primaryTop", .9); setColor("green", "online")
+setColor("danger", "danger"); setColor("blue", "accentBlueEdge", .62); setColor("disabled", "disabled", .94)
 
 -- "rrggbb" for |cffrrggbb colour codes.
 function T.PaletteHex(key)
