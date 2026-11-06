@@ -185,7 +185,7 @@ function R.CreatePreview(parent,y)
 end
 function R.CreateSettings(view,parent)
     local scroll=CreateFrame("ScrollFrame",nil,parent,"UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT",22,-82);scroll:SetPoint("BOTTOMRIGHT",-42,view.embedded and 12 or 50)
+    scroll:SetPoint("TOPLEFT",22,-view.contentTop);scroll:SetPoint("BOTTOMRIGHT",-42,view.embedded and 12 or 50)
     local content=CreateFrame("Frame",nil,scroll);content:SetSize(416,800);scroll:SetScrollChild(content)
     scroll:EnableMouseWheel(true);scroll:SetScript("OnMouseWheel",function(self,delta)
         self:SetVerticalScroll(math.max(0,math.min(self:GetVerticalScrollRange(),self:GetVerticalScroll()-delta*35)))

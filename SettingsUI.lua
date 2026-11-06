@@ -118,8 +118,13 @@ function U.Create(parent, embedded)
         close:SetPoint("BOTTOMRIGHT", -18, 16)
         if UISpecialFrames then UISpecialFrames[#UISpecialFrames + 1] = "ZenialClassFramesWindow" end
     end
-    local heading = T.Text(frame, "ZenialClassFrames", "GameFontNormalLarge", "gold")
-    heading:SetPoint("TOPLEFT", 22, -22)
+    -- Embedded, the host's tab already names the addon, so tabs and pages move up by its height.
+    view.contentTop = embedded and 44 or 82
+    local tabTop = embedded and -10 or -48
+    if not embedded then
+        local heading = T.Text(frame, "ZenialClassFrames", "GameFontNormalLarge", "gold")
+        heading:SetPoint("TOPLEFT", 22, -22)
+    end
     local function section(title)
         local panel = CreateFrame("Frame", nil, frame, BackdropTemplateMixin and "BackdropTemplate" or nil)
         T.Panel(panel, "inset")
@@ -259,7 +264,7 @@ function U.Create(parent, embedded)
     end
     if NS.Portraits then
         local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-        scroll:SetPoint("TOPLEFT", 22, -82)
+        scroll:SetPoint("TOPLEFT", 22, -view.contentTop)
         scroll:SetPoint("BOTTOMRIGHT", -42, embedded and 12 or 50)
         local content = CreateFrame("Frame", nil, scroll)
         content:SetSize(416, NS.Stuns and 600 or 340); scroll:SetScrollChild(content)
@@ -330,7 +335,7 @@ function U.Create(parent, embedded)
     if NS.BarTextSettings then
         local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
         -- The manager uses the same two header rows as the standalone window.
-        scroll:SetPoint("TOPLEFT", 22, -82)
+        scroll:SetPoint("TOPLEFT", 22, -view.contentTop)
         scroll:SetPoint("BOTTOMRIGHT", -42, embedded and 12 or 50)
         local content = CreateFrame("Frame", nil, scroll)
         scroll:SetScrollChild(content)
@@ -342,11 +347,11 @@ function U.Create(parent, embedded)
         view.barTextScroll, view.barTextContent = scroll, content
         local generalTab = T.Button(frame, NS.BarTextLocale.general, 100, 25, function() view:SelectTab("general") end)
         local textTab = T.Button(frame, NS.BarTextLocale.tab, 124, 25, function() view:SelectTab("texts") end)
-        generalTab:SetPoint("TOPRIGHT", -266, -48)
-        textTab:SetPoint("TOPRIGHT", -134, -48)
+        generalTab:SetPoint("TOPRIGHT", -266, tabTop)
+        textTab:SetPoint("TOPRIGHT", -134, tabTop)
         if view.portraitScroll then
             local portraitTab = T.Button(frame, tr("Portraits", "Portraits"), 104, 25, function() view:SelectTab("portraits") end)
-            portraitTab:SetPoint("TOPRIGHT", -22, -48)
+            portraitTab:SetPoint("TOPRIGHT", -22, tabTop)
             view.portraitTab = portraitTab
         end
         function view:SelectTab(id)
@@ -365,7 +370,7 @@ function U.Create(parent, embedded)
     end
     function view:Layout()
         local width = frame:GetWidth()
-        local top = 82
+        local top = self.contentTop
         local columns = width >= 740
         local panelWidth = math.min(432, columns and (width - 64) / 2 or width - 44)
         display:ClearAllPoints(); palette:ClearAllPoints()
