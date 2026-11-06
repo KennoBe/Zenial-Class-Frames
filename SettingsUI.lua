@@ -246,7 +246,8 @@ function U.Create(parent, embedded)
     if NS.ConflictMonitor then view.extraViews.compatibility=NS.ConflictMonitor.CreateSettings(view,frame) end
     if NS.Readability then
         local more=T.Button(frame,tr("Weitere Optionen","More options"),140,25,function() end)
-        more:SetPoint("TOPRIGHT",-22,-18);T.StyleDropdown(more)
+        -- Embedded there is no heading row above the tabs, so it sits to their left.
+        more:SetPoint("TOPRIGHT",embedded and -378 or -22,embedded and tabTop or -18);T.StyleDropdown(more)
         local popup=CreateFrame("Frame",nil,more,BackdropTemplateMixin and "BackdropTemplate" or nil)
         popup:SetPoint("TOPRIGHT",more,"BOTTOMRIGHT",0,-2);popup:SetSize(180,NS.ConflictMonitor and 64 or 36)
         popup:SetFrameStrata("FULLSCREEN_DIALOG");popup:SetFrameLevel(more:GetFrameLevel()+20)
