@@ -4,7 +4,7 @@
 ## Notes-deDE: Klassenfarben, optionale Klassenportraits und Stun-Ablaufanzeigen, HP-/Ressourcentexte, Lesbarkeit und Kompatibilitätsdiagnose
 ## Author: ZENIAL
 ## Version: 1.7.0
-## SavedVariables: ZenialClassFramesDB
+## SavedVariables: ZenialClassFramesDB, ZenialMinimapDB
 ## IconTexture: Interface\AddOns\ZenialClassFrames\Media\Icon.tga
 ## X-License: MIT
 
