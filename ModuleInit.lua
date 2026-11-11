@@ -23,6 +23,7 @@ end
 if settingsUI then
     settingsUI.Initialize({ GetSettings = getSettings, SetGroupLevel = setGroupLevel,
         SetUnitFrameColors = setUnitFrameColors,
+        GetThreatNumeric = FS.GetThreatNumeric, SetThreatNumeric = FS.SetThreatNumeric,
         SetNameplateMode = setNameplateMode, SetColorPlayerNames = setColorPlayerNames,
         SetNameplateRoleMode = setNameplateRoleMode,
         SetNameColor = setNameColor, ResetNameColors = resetNameColors })

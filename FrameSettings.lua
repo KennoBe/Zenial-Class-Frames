@@ -14,6 +14,26 @@ local defaultNameColors = {
 }
 local settingsReady = false
 
+-- WoW owns persistence for this native option; never override it on login.
+function FS.GetThreatNumeric()
+    local get = C_CVar and C_CVar.GetCVar or GetCVar
+    if type(get) ~= "function" then return nil end
+    local ok, value = pcall(get, "threatShowNumeric")
+    if not ok or not readable(value) then return nil end
+    if value == "1" then return true end
+    if value == "0" then return false end
+end
+
+function FS.SetThreatNumeric(enabled)
+    if not settingsReady or type(enabled) ~= "boolean" then return false end
+    local current = FS.GetThreatNumeric()
+    local set = C_CVar and C_CVar.SetCVar or SetCVar
+    if current == nil or type(set) ~= "function" then return false end
+    if current ~= enabled then pcall(set, "threatShowNumeric", enabled and "1" or "0") end
+    if NS.SettingsUI then NS.SettingsUI.Refresh() end
+    return FS.GetThreatNumeric() == enabled
+end
+
 local function validColor(value)
     if not readable(value) or type(value) ~= "table" or
         (type(canaccesstable) == "function" and not canaccesstable(value)) then return false end
@@ -64,6 +84,7 @@ local function initializeSettings()
             NS.BarText.Migrate(ZenialClassFramesDB)
             if NS.Portraits then NS.Portraits.Migrate(ZenialClassFramesDB) end
             if NS.Readability then NS.Readability.Migrate(ZenialClassFramesDB) end
+            FS.SetThreatNumeric(draft.threatNumeric)
             -- Apply through the same refresh path used by commands and settings.
             NS.RefreshFrames()
         end},fresh) end

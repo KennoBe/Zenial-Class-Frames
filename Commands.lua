@@ -63,6 +63,15 @@ SlashCmdList.ZENIALCLASSFRAMES = function(message)
     elseif command == "textcheck" and argument == "" and NS.BarText then
         showCommandOutput("/zcf textcheck",NS.BarText.Diagnostics(),NS.BarText.Diagnostics)
         return
+    elseif command == "threat" and (argument == "" or argument == "on" or argument == "off") and FS.Ready() then
+        local current = FS.GetThreatNumeric()
+        local enabled = argument == "on" or (argument == "" and not current)
+        if current == nil or not FS.SetThreatNumeric(enabled) then
+            response = german and "Blizzard-Aggroanzeige konnte nicht geändert werden." or "Could not change the Blizzard threat indicator."
+        else
+            response = (german and "Blizzard-Aggroanzeige: " or "Blizzard threat indicator: ") ..
+                (enabled and (german and "aktiviert" or "enabled") or (german and "deaktiviert" or "disabled")) .. "."
+        end
     elseif command == "showgrouplevel" and (argument == "" or argument == "on" or argument == "off") and FS.Ready() then
         local enabled = argument == "on" or (argument == "" and not ZenialClassFramesDB.showGroupLevel)
         setGroupLevel(enabled)
@@ -92,6 +101,7 @@ SlashCmdList.ZENIALCLASSFRAMES = function(message)
             "Usage: /zcf config; /zcf settings; /zcf showgrouplevel [on|off]; /zcf nameplates [off|enemies|teammates|everyone]; /zcf namecolors [on|off] (omit on/off to toggle); /zcf help."
         if NS.BarTextLocale then response = response .. NS.BarTextLocale.help end
         response = response .. " /zcf roles [off|enemies|teammates|everyone]; /zcf rolecheck."
+        response = response .. " /zcf threat [on|off]."
         if monitor then response=response.." /zcf conflicts; /zcf recheck." end
     end
     if DEFAULT_CHAT_FRAME then

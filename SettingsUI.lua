@@ -149,10 +149,17 @@ function U.Create(parent, embedded)
     check:SetScript("OnClick", function(self) callbacks.SetGroupLevel(self:GetChecked() == true) end)
     view.groupLevel = check
 
+    local threat = CreateFrame("CheckButton", nil, display, "UICheckButtonTemplate")
+    threat:SetSize(28,28); threat:SetPoint("TOPLEFT",14,-106); T.StyleCheckbox(threat)
+    local threatLabel = T.Text(display,tr("Blizzard-Aggroanzeige (Prozent)","Blizzard threat indicator (percent)"))
+    threatLabel:SetPoint("LEFT",threat,"RIGHT",6,0)
+    threat:SetScript("OnClick",function(self) callbacks.SetThreatNumeric(self:GetChecked()==true) end)
+    view.threatNumeric = threat
+
     local label = T.Text(display, tr("Nameplate-HP: Klassenfarben", "Nameplate health: class colors"))
-    label:SetPoint("TOPLEFT", 18, -120)
+    label:SetPoint("TOPLEFT", 18, -144)
     local control = T.Button(display, "", 280, 28, function() end)
-    control:SetPoint("TOPLEFT", 18, -144)
+    control:SetPoint("TOPLEFT", 18, -166)
     T.StyleDropdown(control)
     view.nameplateMode = control
     local menu = CreateFrame("Frame", nil, control, BackdropTemplateMixin and "BackdropTemplate" or nil)
@@ -177,9 +184,9 @@ function U.Create(parent, embedded)
         if menu:IsShown() then closeMenu() else closeMenu(); menu:Show(); openMenu = menu end
     end)
     local rolesLabel = T.Text(display, tr("Nameplates: Rollenicons", "Nameplates: role icons"))
-    rolesLabel:SetPoint("TOPLEFT", 18, -184)
+    rolesLabel:SetPoint("TOPLEFT", 18, -202)
     local roles = T.Button(display, "", 280, 28, function() end)
-    roles:SetPoint("TOPLEFT", 18, -208); T.StyleDropdown(roles)
+    roles:SetPoint("TOPLEFT", 18, -224); T.StyleDropdown(roles)
     view.nameplateRoleMode = roles
     local rolesMenu = CreateFrame("Frame", nil, roles, BackdropTemplateMixin and "BackdropTemplate" or nil)
     rolesMenu:SetSize(280, 120); rolesMenu:SetPoint("TOPLEFT", roles, "BOTTOMLEFT", 0, -2)
@@ -405,6 +412,9 @@ function U.Create(parent, embedded)
         frameColors:SetEnabled(settings~=nil); frameColors:SetChecked(settings and settings.colorUnitFrames==true or false)
         check:SetEnabled(settings ~= nil); control:SetEnabled(settings ~= nil)
         check:SetChecked(settings and settings.showGroupLevel == true or false)
+        local threatEnabled = callbacks.GetThreatNumeric()
+        threat:SetEnabled(settings ~= nil and threatEnabled ~= nil)
+        threat:SetChecked(threatEnabled == true)
         control:SetText(settings and U.ModeLabel(settings.nameplateMode) or tr("Wird geladen…", "Loading…"))
         control.value = settings and settings.nameplateMode or nil
         roles:SetEnabled(settings ~= nil)

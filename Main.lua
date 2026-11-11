@@ -12,6 +12,7 @@ local scanFrames, frameUnits = UF.ScanFrames, UF.FrameUnits
 local eventFrame = CreateFrame("Frame")
 for _, event in ipairs({
     "ADDON_LOADED",
+    "CVAR_UPDATE",
     "GROUP_ROSTER_UPDATE",
     "PLAYER_ALIVE",
     "PLAYER_DEAD",
@@ -37,6 +38,12 @@ for _, event in ipairs({
 end
 
 eventFrame:SetScript("OnEvent", function(_, event, loadedAddon)
+    if event == "CVAR_UPDATE" then
+        if readable(loadedAddon) and type(loadedAddon) == "string" and loadedAddon:lower() == "threatshownumeric" and NS.SettingsUI then
+            NS.SettingsUI.Refresh()
+        end
+        return
+    end
     if (event == "ADDON_LOADED" and loadedAddon == addonName) or
         (event == "PLAYER_LOGIN" and not FS.Ready()) then
         initializeSettings()

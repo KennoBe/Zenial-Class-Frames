@@ -13,6 +13,8 @@ end
 local function sanitize(raw, current)
     raw = type(raw)=="table" and raw or {}
     local result = {}
+    if type(raw.threatNumeric)=="boolean" then result.threatNumeric=raw.threatNumeric
+    else result.threatNumeric=NS.FrameSettings.GetThreatNumeric() end
     for _,key in ipairs({"colorUnitFrames","showGroupLevel","colorPlayerNames"}) do
         if type(raw[key])=="boolean" then result[key]=raw[key] else result[key]=current[key] end
     end
@@ -55,7 +57,7 @@ function S.Initialize(callbacks, fresh)
     local steps={}
     -- Keep the six existing setup pages in place; add bar texts and appearance
     -- before the final summary.
-    local heights={96,148,148,120,124,258,290,290,280,286,292}
+    local heights={96,240,148,120,124,258,290,290,280,286,292}
     if db.setup.barTextVersion ~= 1 then
         if type(db.setup.draft) == "table" and db.setup.step == 7 then db.setup.step = 9 end
         db.setup.barTextVersion = 1
@@ -93,6 +95,10 @@ function S.Initialize(callbacks, fresh)
         local bar=panel:CreateTexture(nil,"BACKGROUND"); bar:SetSize(500,28); bar:SetPoint("CENTER")
         text:SetTextColor(.05,.03,.02)
         v:AddUpdate(function() bar:SetColorTexture(v.draft.colorUnitFrames and .41 or .25,v.draft.colorUnitFrames and .8 or .65,v.draft.colorUnitFrames and .94 or .3,1) end)
+        local threat=v:Check(p,"threatNumeric",tr("Blizzard-Aggroanzeige (Prozent)","Blizzard threat indicator (percent)"),0,-164)
+        v:AddUpdate(function() threat:SetEnabled(NS.FrameSettings.GetThreatNumeric()~=nil) end)
+        v:Label(p,tr("Übernimmt deine aktuelle WoW-Einstellung. Steuert die Standardanzeige am Ziel über threatShowNumeric.",
+            "Uses your current WoW setting. Controls the default target indicator through threatShowNumeric."),0,-200,552,40,"GameFontHighlightSmall","muted")
     end)
     step("Level deiner Gruppenmitglieder","Your party members' levels",
         "Zeige das Level deiner Gruppenmitglieder direkt am Gruppenporträt. Ein kleiner Kreis unten links macht die Information sichtbar, ohne das Gruppenfenster zu vergrößern.",
@@ -329,6 +335,7 @@ function S.Initialize(callbacks, fresh)
             local function on(value) return value and tr("Aktiviert","Enabled") or tr("Deaktiviert","Disabled") end
             summary:SetText(table.concat({tr("HP-Klassenfarben: ","Health class colors: ")..on(v.draft.colorUnitFrames),
                 tr("Gruppenlevel: ","Party levels: ")..on(v.draft.showGroupLevel),
+                tr("Blizzard-Aggroanzeige: ","Blizzard threat indicator: ")..on(v.draft.threatNumeric),
                 tr("Nameplate-HP: ","Nameplate health: ")..NS.SettingsUI.ModeLabel(v.draft.nameplateMode),
                 tr("Namenfarben: ","Name colors: ")..on(v.draft.colorPlayerNames),
                 tr("Balkentexte: ","Bar texts: ")..(function()
