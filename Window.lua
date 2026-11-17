@@ -391,7 +391,9 @@ function Window.New(spec, parent)
         logo:SetTexture(iconPath)
         local title = K.Text(owner, "ZENIAL", "title", "gold")
         title:SetPoint("TOPLEFT", x + 39, y + 1); title:SetSize(110, 18)
-        local label = K.Text(owner, K.Upper(text(spec.label or "")), "overline", "dim")
+        -- The addon name is a proper noun and is not translated.
+        local addonLabel = type(spec.label) == "function" and spec.label() or spec.label
+        local label = K.Text(owner, K.Upper(type(addonLabel) == "string" and addonLabel or ""), "overline", "dim")
         label:SetPoint("TOPLEFT", x + 40, y - 19); label:SetSize(110, 12)
         view.brand = { logo = logo, title = title, label = label }
     end
