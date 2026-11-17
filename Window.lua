@@ -4,7 +4,9 @@
 -- One frame for every settings and management window of the ZENIAL addons: sidebar with groups and a sliding
 -- marker, top bar, status footer, pages that are built when they are first shown, a confirm dialog, a saved
 -- position and an adjustable height. The same page description also fills an embedded view (tab row instead
--- of the sidebar, no frame, no close button, no Escape) for hosts such as the Community addon manager.
+-- of the sidebar, no frame, no close button, no Escape) for hosts such as the Community addon manager. With
+-- spec.embeddedNav = "auto" (default) the tab row only stays while every title fits its tab; else the embedded
+-- view gets a narrow side list.
 --
 --   Window.New(spec[, parent]) -> view      own window without parent, embedded view with parent
 --   Window.ScrollArea(parent[, width]) -> scroll, content
@@ -51,6 +53,9 @@ local WM = {
     pageTop = TM.pageTop, pageBottom = TM.pageBottom, contentGap = TM.contentGap,
     navEntry = TM.navEntry, navGap = TM.navGap, navGroupGap = TM.navGroupGap, navWidth = TM.navWidth,
     tabHeight = 30, railWidth = 14, headerWidth = 260, footerHeight = 44, dialogWidth = 440, screenMargin = 40,
+    -- embedded side list (narrow column, no brand), text inset of a tab, the header area of an embedded view
+    -- (stands in the status line), width of the version text in the status line
+    sidebarCompact = TM.sidebarCompact, navWidthCompact = TM.navWidthCompact, tabPad = 8, footerHeaderWidth = 220, versionWidth = 90,
 }
 WM.formWidth = WM.pageWidth - WM.formGap     -- form of the own window; embedded views derive it from their page width
 WM.width = WM.sidebar + WM.contentGap + WM.pageWidth + WM.contentGap
@@ -74,6 +79,18 @@ local function call(object, method, ...)
 end
 local function finite(value)
     return type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge
+end
+local function showTip(owner, text, anchor)
+    local tip = GameTooltip
+    if not tip or not tip.SetOwner then return end
+    tip:SetOwner(owner, anchor or "ANCHOR_RIGHT")
+    local r, g, b = T.PaletteColor("text")
+    tip:SetText(text, r, g, b, 1, true)
+    tip:Show()
+end
+local function hideTip()
+    local tip = GameTooltip
+    if tip and tip.Hide then tip:Hide() end
 end
 local function backdropFrame(kind, name, parent)
     return CreateFrame(kind, name, parent, BackdropTemplateMixin and "BackdropTemplate" or nil)
@@ -288,7 +305,7 @@ function Window.New(spec, parent)
     local pages, current = {}, nil
     local hasFooter = type(spec.footer) == "function"
     local footerHeight = hasFooter and ((finite(spec.footerHeight) and spec.footerHeight) or WM.footerHeight) or 0
-    local hasHeader = not embedded and type(spec.header) == "function"
+    local hasHeader = type(spec.header) == "function"
     local name = not embedded and type(spec.name) == "string" and spec.name ~= "" and spec.name or nil
 
     local frame = backdropFrame("Frame", name, parent or UIParent)
@@ -329,10 +346,41 @@ function Window.New(spec, parent)
         end
     end
 
+    -- Text measures (hidden): the font of the entries and tabs, the font of the status line.
+    local measureBody, measureSmall = K.Text(frame, "", "body"), K.Text(frame, "", "caption")
+    measureBody:Hide(); measureSmall:Hide()
+    call(measureBody, "SetWordWrap", false); call(measureSmall, "SetWordWrap", false)
+    local function widthOf(region, value)
+        region:SetText(value)
+        local width = region:GetStringWidth()
+        return finite(width) and width or 0
+    end
+
+    -- Navigation: the own window has the side list with the brand; an embedded view has a tab row while every
+    -- title fits its tab at the minimum host width, else a narrow side list (spec.embeddedNav forces one).
+    local navMode
+    if multi then
+        if not embedded then
+            navMode = "side"
+        elseif spec.embeddedNav == "tabs" or spec.embeddedNav == "side" then
+            navMode = spec.embeddedNav
+        else
+            navMode = "tabs"
+            local keys = visibleKeys()
+            local each = math.floor(WM.embeddedMinWidth / math.max(1, #keys))
+            for _, key in ipairs(keys) do
+                if widthOf(measureBody, text(specs[key].title or key)) + WM.tabPad > each then navMode = "side"; break end
+            end
+        end
+    end
+    view.navMode = navMode
+    local compact = embedded and navMode == "side"
+
     -- Regions ---------------------------------------------------------------------------------
-    local sidebarWidth = WM.sidebar
+    local sidebarWidth = compact and WM.sidebarCompact or WM.sidebar
+    local navWidth = compact and WM.navWidthCompact or WM.navWidth
     local leftEdge = (not embedded and multi) and (sidebarWidth + 1) or (embedded and 0 or 1)
-    local contentX = embedded and 0 or (multi and (sidebarWidth + WM.contentGap) or WM.contentGap)
+    local contentX = embedded and (compact and (sidebarWidth + WM.contentGap) or 0) or (multi and (sidebarWidth + WM.contentGap) or WM.contentGap)
     local statusX = embedded and SP.lg or contentX
     local area = CreateFrame("Frame", nil, frame)
     view.area = area
@@ -390,6 +438,22 @@ function Window.New(spec, parent)
         pageSubtitle:SetPoint("TOPLEFT", frame, "TOPLEFT", titleX, -37); pageSubtitle:SetHeight(14)
         for _, region in ipairs({ pageTitle, pageSubtitle }) do call(region, "SetWordWrap", false) end
         view.title, view.subtitle = pageTitle, pageSubtitle
+        -- A subtitle that is cut shows itself whole in a tooltip. The cover takes mouse input only then, so the
+        -- top bar stays draggable; while it covers the bar it passes the drag on to the window.
+        local cover = CreateFrame("Frame", nil, frame)
+        cover:SetPoint("TOPLEFT", pageSubtitle, "TOPLEFT", 0, 0); cover:SetPoint("BOTTOMRIGHT", pageSubtitle, "BOTTOMRIGHT", 0, 0)
+        cover:EnableMouse(false); cover:RegisterForDrag("LeftButton")
+        cover:SetScript("OnEnter", function(self) showTip(self, pageSubtitle:GetText(), "ANCHOR_BOTTOM") end)
+        cover:SetScript("OnLeave", hideTip)
+        cover:SetScript("OnDragStart", function()
+            local start = frame:GetScript("OnDragStart")
+            if start then start(frame) end
+        end)
+        cover:SetScript("OnDragStop", function()
+            local stop = frame:GetScript("OnDragStop")
+            if stop then stop(frame) end
+        end)
+        view.subtitleHit = cover
         local rightEdge = 44
         if hasHeader then
             view.header = CreateFrame("Frame", nil, frame)
@@ -400,13 +464,20 @@ function Window.New(spec, parent)
         local titleWidth = math.max(160, (multi and WM.width or WM.widthSingle) - titleX - rightEdge - SP.sm)
         pageTitle:SetWidth(titleWidth); pageSubtitle:SetWidth(titleWidth)
         view.close = Window.CloseButton(frame, function() view:Close() end, { tr = tr })
-    else
-        if multi then
-            local row = CreateFrame("Frame", nil, frame)
-            row:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0); row:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
-            row:SetHeight(WM.tabHeight)
-            view.tabRow = row
-        end
+    elseif navMode == "tabs" then
+        local row = CreateFrame("Frame", nil, frame)
+        row:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0); row:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+        row:SetHeight(WM.tabHeight)
+        view.tabRow = row
+    elseif compact then
+        -- The side list of an embedded view: a narrow column above the footer line, no brand, no version.
+        local sidebar = backdropFrame("Frame", nil, frame)
+        view.sidebar = sidebar
+        sidebar:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+        sidebar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, WM.footer)
+        sidebar:SetWidth(sidebarWidth)
+        T.Panel(sidebar, "sidebar")
+        view.indicator = T.CreateNavIndicator(sidebar)
     end
 
     -- Footer: line, status line, version (single page and embedded), grip.
@@ -421,16 +492,73 @@ function Window.New(spec, parent)
     view.status:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", statusX, 8)
     view.status:SetSize(WM.pageWidth - 100, 14)
     call(view.status, "SetWordWrap", false)
-    if not (view.sidebar) then
+    -- The note: right aligned text in the status line (SetNote), left of the version / the grip.
+    view.note = K.Text(frame, "", "caption", "muted")
+    view.note:SetSize(1, 14); view.note:SetJustifyH("RIGHT")
+    call(view.note, "SetWordWrap", false)
+    local versionOnFrame = compact or not view.sidebar
+    if versionOnFrame then
         view.versionLabel = K.Text(frame, "", "caption", "muted")
         view.versionLabel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -footerRight, 9)
-        view.versionLabel:SetSize(90, 12); view.versionLabel:SetJustifyH("RIGHT")
+        view.versionLabel:SetSize(WM.versionWidth, 12); view.versionLabel:SetJustifyH("RIGHT")
     end
+    -- An embedded view gives the header area to the status line, between the status and the note.
+    if embedded and hasHeader then
+        view.header = CreateFrame("Frame", nil, frame)
+        view.header:SetSize(WM.footerHeaderWidth, 26)
+    end
+    -- A text that does not fit is cut; its transparent cover (only while it is cut) shows the whole text.
+    local function textCover(region)
+        local cover = CreateFrame("Frame", nil, frame)
+        cover:SetPoint("TOPLEFT", region, "TOPLEFT", 0, 0); cover:SetPoint("BOTTOMRIGHT", region, "BOTTOMRIGHT", 0, 0)
+        cover:EnableMouse(false)
+        cover:SetScript("OnEnter", function(self) showTip(self, region:GetText(), "ANCHOR_TOP") end)
+        cover:SetScript("OnLeave", hideTip)
+        return cover
+    end
+    view.statusHit, view.noteHit = textCover(view.status), textCover(view.note)
 
     if hasFooter then
         view.footer = backdropFrame("Frame", nil, frame)
         T.Panel(view.footer, "surface")
         view.footer:SetSize(WM.pageWidth, footerHeight)
+    end
+
+    -- Status line: status (left), header area (embedded), note, version (single page and embedded) share the
+    -- width; what does not fit is cut, and the cut text is shown whole in a tooltip.
+    local function layoutFooter()
+        local width = frame:GetWidth()
+        if not (finite(width) and width > 0) then width = embedded and WM.embeddedMinWidth or (multi and WM.width or WM.widthSingle) end
+        local versionSpace = 0
+        if versionOnFrame and versionText() ~= "" then versionSpace = WM.versionWidth + SP.sm end
+        local right = footerRight + versionSpace
+        local footerHeader = embedded and view.header or nil
+        local headerSpace = footerHeader and (WM.footerHeaderWidth + SP.sm) or 0
+        local rest = math.max(2, width - footerRight - versionSpace - statusX - headerSpace)
+        local statusNatural = widthOf(measureSmall, view.status:GetText() or "")
+        local noteNatural = widthOf(measureSmall, view.note:GetText() or "")
+        local gap = (statusNatural > 0 and noteNatural > 0) and SP.sm or 0
+        local statusShare = math.min(statusNatural, rest * .55)
+        local noteWidth = math.max(1, math.min(noteNatural, rest - gap - statusShare))
+        local statusWidth = math.max(1, rest - (noteNatural > 0 and (noteWidth + SP.sm) or 0))
+        view.status:SetWidth(statusWidth)
+        view.note:ClearAllPoints(); view.note:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -right, 8)
+        view.note:SetWidth(noteWidth)
+        if footerHeader then
+            local offset = right + (noteNatural > 0 and (noteWidth + SP.sm) or 0)
+            footerHeader:ClearAllPoints(); footerHeader:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -offset, 2)
+        end
+        view.statusHit:EnableMouse(statusNatural > statusWidth + .5)
+        view.noteHit:EnableMouse(noteNatural > noteWidth + .5)
+    end
+
+    -- A cut title shows itself whole in a tooltip. `inset`: width the entry keeps for icon and margins.
+    local function titleTip(button, title, inset)
+        button:HookScript("OnEnter", function(self)
+            local width = self:GetWidth()
+            if finite(width) and widthOf(measureBody, title) > width - inset then showTip(self, title) end
+        end)
+        button:HookScript("OnLeave", hideTip)
     end
 
     -- Navigation ---------------------------------------------------------------------------------
@@ -439,30 +567,42 @@ function Window.New(spec, parent)
         for key, control in pairs(view.nav) do T.SetSelected(control, key == current) end
     end
 
+    local ENTRY_HEIGHTS = { WM.navEntry, 32, 30, 28, 27, 26, 24 }
     local function layoutSidebar()
         local sidebar = view.sidebar
         if not sidebar then return end
-        local x = math.floor((sidebarWidth - WM.navWidth) / 2)
+        local x = math.floor((sidebarWidth - navWidth) / 2)
         local height = frame:GetHeight()
-        height = finite(height) and height > 0 and height or WM.height
+        height = finite(height) and height > 0 and height or (embedded and 440 or WM.height)
         local keys = visibleKeys()
-        local positions, headings
-        for _, squeeze in ipairs(NAV_SQUEEZE) do
-            local gap = math.max(0, WM.navGap - squeeze[1])
-            local y, last = -(WM.brand + 8), nil
-            positions, headings = {}, {}
-            for _, key in ipairs(keys) do
-                local label = specs[key].group ~= nil and text(specs[key].group) or nil
-                if label and label ~= last then
-                    last = label
-                    y = y - (10 - squeeze[2])
-                    headings[#headings + 1] = { y = y, text = label }
-                    y = y - (WM.navGroupGap - squeeze[3])
+        -- The entries start below the brand (own window) or at the top (embedded) and must end above the version
+        -- (own window) or the footer line (embedded). The spacing is squeezed first; in the narrow embedded
+        -- column the entries get lower as well.
+        local top = compact and SP.sm or (WM.brand + 8)
+        local room = compact and (height - WM.footer - SP.sm) or (height - 46)
+        local heights = compact and ENTRY_HEIGHTS or { WM.navEntry }
+        local positions, headings, entryHeight
+        local fits = false
+        for _, candidate in ipairs(heights) do
+            entryHeight = candidate
+            for _, squeeze in ipairs(NAV_SQUEEZE) do
+                local gap = math.max(0, WM.navGap - squeeze[1])
+                local y, last = -top, nil
+                positions, headings = {}, {}
+                for _, key in ipairs(keys) do
+                    local label = specs[key].group ~= nil and text(specs[key].group) or nil
+                    if label and label ~= last then
+                        last = label
+                        y = y - (10 - squeeze[2])
+                        headings[#headings + 1] = { y = y, text = label }
+                        y = y - (WM.navGroupGap - squeeze[3])
+                    end
+                    positions[key] = y
+                    y = y - (candidate + gap)
                 end
-                positions[key] = y
-                y = y - (WM.navEntry + gap)
+                if -(y + gap) <= room then fits = true; break end
             end
-            if y + gap >= -(height - 34) + 12 then break end
+            if fits then break end
         end
         for index, heading in ipairs(headings) do
             local label = view.navGroups[index]
@@ -473,7 +613,7 @@ function Window.New(spec, parent)
             end
             label:SetText(K.Upper(heading.text))
             label:ClearAllPoints(); label:SetPoint("TOPLEFT", sidebar, "TOPLEFT", x + 12, heading.y)
-            label:SetWidth(WM.navWidth - 12)
+            label:SetWidth(navWidth - 12)
             label:Show()
         end
         for index = #headings + 1, #view.navGroups do view.navGroups[index]:Hide() end
@@ -482,19 +622,21 @@ function Window.New(spec, parent)
             if positions[key] then
                 if not entry then
                     local page = specs[key]
-                    entry = T.Button(sidebar, text(page.title or key), WM.navWidth, WM.navEntry, navigate(key), "nav")
+                    local title = text(page.title or key)
+                    entry = T.Button(sidebar, title, navWidth, entryHeight, navigate(key), "nav")
                     T.StyleNav(entry, type(page.icon) == "string" and T.iconCells and T.iconCells[page.icon] and page.icon or nil)
                     entry.zenialIndicator = view.indicator
+                    titleTip(entry, title, 42)
                     view.nav[key] = entry
                 end
                 entry:ClearAllPoints(); entry:SetPoint("TOPLEFT", sidebar, "TOPLEFT", x, positions[key])
-                entry:SetSize(WM.navWidth, WM.navEntry)
+                entry:SetSize(navWidth, entryHeight)
                 entry:Show()
             elseif entry then
                 entry:Hide()
             end
         end
-        view.indicator:SetBleed(x - 1, sidebarWidth - WM.navWidth - x - 1)
+        view.indicator:SetBleed(x - 1, sidebarWidth - navWidth - x - 1)
     end
 
     local function layoutTabs(width)
@@ -507,8 +649,10 @@ function Window.New(spec, parent)
             local tab = view.nav[key]
             if not tab then
                 local page = specs[key]
-                tab = T.Button(row, text(page.title or key), each, WM.tabHeight - 2, navigate(key), "tab")
+                local title = text(page.title or key)
+                tab = T.Button(row, title, each, WM.tabHeight - 2, navigate(key), "tab")
                 T.StyleTab(tab)
+                titleTip(tab, title, WM.tabPad)
                 view.nav[key] = tab
             end
             shown[key] = true
@@ -529,8 +673,9 @@ function Window.New(spec, parent)
         local extra = hasFooter and (footerHeight + SP.sm) or 0
         local areaWidth, areaTop
         if embedded then
-            areaWidth = math.max(WM.embeddedMinWidth, width)
-            areaTop = (multi and WM.tabHeight or 0) + SP.sm
+            -- Beside the side list the page area is narrower by the column and the gap.
+            areaWidth = math.max(WM.embeddedMinWidth, width) - contentX
+            areaTop = (navMode == "tabs" and WM.tabHeight or 0) + SP.sm
             self.pageWidth = areaWidth - WM.contentGap
             self.formWidth = self.pageWidth - WM.formGap
         else
@@ -549,7 +694,7 @@ function Window.New(spec, parent)
             view.footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", contentX, WM.pageBottom)
             view.footer:SetSize(areaWidth, footerHeight)
         end
-        view.status:SetWidth(math.max(100, areaWidth - 110))
+        layoutFooter()
         for _, page in pairs(pages) do
             if page.content then page.content:SetWidth(self.pageWidth) end
             -- A narrower host takes the form of a built page in; a wider one leaves it left aligned.
@@ -559,7 +704,7 @@ function Window.New(spec, parent)
                 if ok and changed and page.key == current and type(page.refresh) == "function" then page.refresh() end
             end
         end
-        if embedded then layoutTabs(width) else layoutSidebar() end
+        if navMode == "tabs" then layoutTabs(width) elseif navMode == "side" then layoutSidebar() end
         markSelection()
     end
 
@@ -595,6 +740,9 @@ function Window.New(spec, parent)
 
     local function closePopups()
         for _, page in pairs(pages) do if page.form then call(page.form, "ClosePopups") end end
+        -- Menus of free-standing dropdowns (Form.Dropdown) belong to no page form: the addon has one open menu.
+        local Form = private.Form
+        if type(Form) == "table" and type(Form.ClosePopups) == "function" then pcall(Form.ClosePopups) end
     end
     local function releaseInput(key)
         local page = pages[key]
@@ -605,7 +753,12 @@ function Window.New(spec, parent)
         if not pageTitle then return end
         local page = current and specs[current]
         pageTitle:SetText(page and text(page.title) or "")
-        pageSubtitle:SetText(page and text(page.subtitle) or "")
+        local subtitle = page and text(page.subtitle) or ""
+        pageSubtitle:SetText(subtitle)
+        if view.subtitleHit then
+            local width = pageSubtitle:GetWidth()
+            view.subtitleHit:EnableMouse(finite(width) and widthOf(measureSmall, subtitle) > width + .5)
+        end
     end
     local function refreshVersion()
         if view.versionLabel then view.versionLabel:SetText(versionText()) end
@@ -724,6 +877,14 @@ function Window.New(spec, parent)
     function view:SetStatus(value, tone)
         view.status:SetText(type(value) == "string" and value or "")
         T.Tint(view.status, "SetTextColor", TONES[tone] or "gold")
+        layoutFooter()
+    end
+
+    -- Right aligned text in the status line, left of the version (or the grip): hints that stay while the status changes.
+    function view:SetNote(value, tone)
+        view.note:SetText(type(value) == "string" and value or "")
+        T.Tint(view.note, "SetTextColor", TONES[tone] or "muted")
+        layoutFooter()
     end
 
     -- Confirm dialog ---------------------------------------------------------------------------------------

@@ -55,7 +55,7 @@ function S.BuildPage(page, view)
             return settings ~= nil and selected ~= "common" and settings.frames[selected].overwrite == true
         end,
         set = write("overwrite") })
-    local useForAll = form:Buttons({ { text = L.useForAll, enabled = ready,
+    form:Buttons({ anchor = "useForAll", { text = L.useForAll, enabled = ready,
         visible = function() return selected == "common" end,
         onClick = function() B.Set("common", "overwrite", false) end } })
     form:Note({ key = "inheritanceHint", text = function()
@@ -131,7 +131,7 @@ function S.BuildPage(page, view)
         return unavailable and L.unavailable .. unavailable or B.deferred and L.deferred or ""
     end })
 
-    view.barText = { useForAll = useForAll.entries[1].button, previewHealth = previewHealth, previewPower = previewPower }
+    view.barText = { previewHealth = previewHealth, previewPower = previewPower }
 end
 function S.Initialize(callbacks)
     S.GetSettings = function()

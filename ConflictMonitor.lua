@@ -297,8 +297,7 @@ function M.BuildPage(page,view)
     local form=NS.SettingsUI.NewForm(page,view)
     local ui={form=form}
     form:Card()
-    local buttons=form:Buttons({{text=tr("Erneut prüfen","Recheck"),onClick=function() M.Recheck() end}})
-    ui.recheck=buttons.entries[1].button
+    form:Buttons({anchor="recheck",{text=tr("Erneut prüfen","Recheck"),onClick=function() M.Recheck() end}})
     form:Custom({key="compatibilityReport",
         height=function() return math.max(24,math.ceil(tonumber(ui.report and ui.report:GetStringHeight()) or 16)+12) end,
         build=function(frame)
@@ -306,8 +305,8 @@ function M.BuildPage(page,view)
             text:SetPoint("TOPLEFT",frame,"TOPLEFT",0,-6);text:SetJustifyH("LEFT");text:SetJustifyV("TOP");text:SetWordWrap(true)
             NS.Theme.Font(text,"body","text");ui.report=text
         end,
-        refresh=function()
-            ui.report:SetWidth(form.inner)
+        refresh=function(frame,width)
+            ui.report:SetWidth(width)
             ui.report:SetText(table.concat(M.Diagnostics(),"\n\n"))
         end})
     view.compatibility=ui

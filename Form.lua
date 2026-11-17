@@ -9,7 +9,9 @@ local addonName, private = ...
 --
 -- Value rows (Toggle, Slider, Select, Segment, Input) take an optional spec.button = { text, onClick, tip,
 -- variant, enabled, width }: one button right of the control on the same line. Rows of buttons wrap into
--- lines. Form:Row(key) finds a row, Form:SetWidth(width) changes the width of a built page.
+-- lines. Form:Row(key) finds a row, Form:SetWidth(width) changes the width of a built page. A value row with
+-- `silent = true` writes but does not report through ctx.changed. Form.Dropdown(parent, spec) and
+-- Form.Edit(parent, spec) are single fields in the look of the rows, placed by the caller.
 if type(addonName) ~= "string" or type(private) ~= "table" then return end
 local T0 = private.Theme
 if type(T0) ~= "table" or type(T0.Tint) ~= "function" or type(T0.StyleCheckbox) ~= "function" then return end
@@ -236,7 +238,7 @@ function Form:Commit(row, value, key, force)
     local target = key or keyOf(spec)
     if spec.set then spec.set(value) elseif ctx.write then ctx.write(target, value) end
     if spec.onChange then spec.onChange(value) end
-    if ctx.changed then ctx.changed(target) end
+    if ctx.changed and not spec.silent then ctx.changed(target) end
     self:Update(row)
     self:ApplyStates()
 end
@@ -285,7 +287,13 @@ end
 local function sliderText(self, spec, value)
     local label = spec.labels and spec.labels[value]
     if label ~= nil then return resolve(self, label) end
-    return string.format(spec.format or "%g", value) .. (spec.suffix ~= nil and resolve(self, spec.suffix) or "")
+    local suffix = spec.suffix ~= nil and resolve(self, spec.suffix) or ""
+    if type(spec.format) == "function" then
+        -- The function gets the value without float noise (0.30000000000000004 is 0.3).
+        local ok, text = pcall(spec.format, tonumber(string.format("%.8g", value)) or value)
+        return (ok and text ~= nil and tostring(text) or string.format("%g", value)) .. suffix
+    end
+    return string.format(spec.format or "%g", value) .. suffix
 end
 
 -- A text of the form itself in the client language, with its placeholders filled in.
@@ -514,7 +522,7 @@ end
 function Form:Slider(spec)
     local T = theme()
     local row = addRow(self, "Slider", spec)
-    local valueWidth = (spec.labels or spec.suffix) and VALUE_W_WIDE or VALUE_W
+    local valueWidth = (spec.labels or spec.suffix or type(spec.format) == "function") and VALUE_W_WIDE or VALUE_W
     addLabels(self, row, 0, row.inner - SLIDER_W - valueWidth - 8 - GAP)
     row.span = SLIDER_W + valueWidth + 8
     local slider = CreateFrame("Slider", nil, row.frame)
@@ -612,7 +620,13 @@ function Form:Slider(spec)
 end
 
 -- Select (dropdown with a flat popup list) ----------------------------------------------------
+-- Form:ClosePopups() closes the list of this form; Form.ClosePopups() (module function) closes the one open
+-- list of the addon, wherever it belongs (a form row or a Form.Dropdown).
 function Form:ClosePopups()
+    if self == nil or self == Form then
+        if active then active:ClosePopups() end
+        return
+    end
     local popup = self.popup
     if popup then
         popup.state = nil
@@ -620,6 +634,15 @@ function Form:ClosePopups()
         popup.blocker:Hide()
     end
     if active == self then active = nil end
+end
+
+-- Text of a select field: the chosen option, else the placeholder (spec.placeholder), else nothing.
+local function selectText(self, row)
+    local text = optionText(self, row, self:Read(row))
+    if text then return text end
+    local placeholder = row.spec.placeholder
+    if placeholder ~= nil then return resolve(self, placeholder) end
+    return ""
 end
 
 local function renderPopup(self)
@@ -697,7 +720,11 @@ local function openPopup(self, row)
     active = self
     popup.state = { row = row, options = optionList(row), offset = 0, width = row.control:GetWidth() }
     popup:ClearAllPoints()
-    popup:SetPoint("TOPLEFT", row.control, "BOTTOMLEFT", 0, -2)
+    if row.spec.placement == "up" then
+        popup:SetPoint("BOTTOMLEFT", row.control, "TOPLEFT", 0, 2)
+    else
+        popup:SetPoint("TOPLEFT", row.control, "BOTTOMLEFT", 0, -2)
+    end
     popup.blocker:Show(); popup:Show()
     renderPopup(self)
 end
@@ -727,8 +754,7 @@ function Form:Select(spec)
     attachTip(self, row, button)
     row.update = function()
         refreshLabels(self, row)
-        local text = optionText(self, row, self:Read(row))
-        button:SetText(text or "")
+        button:SetText(selectText(self, row))
         local popup = self.popup
         if popup and popup.state and popup.state.row == row then
             popup.state.options = optionList(row)
@@ -817,16 +843,64 @@ function Form:Segment(spec)
 end
 
 -- Color --------------------------------------------------------------------------------------
+-- The open session of a row with cancelOnLeave (one per addon: there is one picker): until the picker is
+-- accepted a pick is only a preview, and leaving the row puts the first colour back.
+local colorActive
+local pickerLoadTried = false
+
+-- Ends a colour session. With `restore` the colour from before the session comes back, but only while the picker
+-- is still open and still ours: an accepted colour stays, and a picker another addon took over is left alone.
+local function endColor(session, restore)
+    if session.closed then return end
+    session.closed = true
+    if colorActive == session then colorActive = nil end
+    local form = session.form
+    if form.colorSession == session then form.colorSession = nil end
+    local picker = session.picker
+    local shown = type(picker.IsShown) ~= "function" or picker:IsShown()
+    local owned = picker.swatchFunc == nil or picker.swatchFunc == session.swatchFunc
+    if not (shown and owned) then return end
+    if restore then
+        local original = session.original
+        form:Commit(session.row, { original[1], original[2], original[3] }, session.key, true)
+    end
+    if type(picker.Hide) == "function" then pcall(picker.Hide, picker) end
+    if restore and picker.swatchFunc == session.swatchFunc then
+        picker.swatchFunc, picker.cancelFunc = nil, nil
+        if picker.func == session.swatchFunc then picker.func = nil end
+    end
+end
+
+-- Puts the colour back that an open preview (cancelOnLeave) replaced, and closes the picker.
+function Form.CancelColor()
+    if colorActive then endColor(colorActive, true) end
+end
+
+-- The client loads the colour picker on demand; asked for once.
+local function loadPicker()
+    if pickerLoadTried then return end
+    pickerLoadTried = true
+    local load = type(C_AddOns) == "table" and C_AddOns.LoadAddOn or LoadAddOn
+    if type(load) == "function" then pcall(load, "Blizzard_ColorPickerFrame") end
+end
+
 local function chooseColor(self, row)
     if not stateOf(self, row) then return end
+    local spec = row.spec
     local picker = ColorPickerFrame
-    if not picker then return end
+    if not picker then loadPicker(); picker = ColorPickerFrame end
+    if not picker then
+        if spec.onUnavailable then spec.onUnavailable() end
+        return
+    end
+    -- A preview of another session (cancelOnLeave) goes back first, so the colour read below is the real one.
+    if colorActive then endColor(colorActive, true) end
     local current = self:Read(row)
     local original = type(current) == "table" and { current[1] or 1, current[2] or 1, current[3] or 1 } or { 1, 1, 1 }
     -- The key of this session is fixed now: the row key can change while the picker is open.
-    local key = keyOf(row.spec)
+    local key = keyOf(spec)
     if self.colorSession then self.colorSession.closed = true end
-    local session = { picker = picker, closed = false }
+    local session = { picker = picker, closed = false, form = self, row = row, key = key, original = original }
     self.colorSession = session
     local function apply(r, g, b)
         if session.closed then return end
@@ -842,6 +916,7 @@ local function chooseColor(self, row)
             if not session.closed then self:Commit(row, { original[1], original[2], original[3] }, key, true) end
         end }
     session.swatchFunc = info.swatchFunc
+    if spec.cancelOnLeave then colorActive = session end
     if type(picker.SetupColorPickerAndShow) == "function" and pcall(picker.SetupColorPickerAndShow, picker, info) then return end
     -- Clients without SetupColorPickerAndShow: the older fields of the picker frame.
     picker.func, picker.swatchFunc, picker.cancelFunc = info.swatchFunc, info.swatchFunc, info.cancelFunc
@@ -854,9 +929,9 @@ function Form:Color(spec)
     local T = theme()
     local row = addRow(self, "Color", spec)
     addLabels(self, row, 0, row.inner - SWATCH_W - GAP)
+    row.span = SWATCH_W
     local swatch = CreateFrame("Button", nil, row.frame)
     swatch:SetSize(SWATCH_W, SWATCH_H)
-    swatch:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", 0, -6)
     swatch.edges = T.Edges(swatch, "BORDER"); T.TintEdges(swatch.edges, "fieldEdge")
     swatch.fill = swatch:CreateTexture(nil, "ARTWORK")
     swatch.fill:SetPoint("TOPLEFT", 1, -1); swatch.fill:SetPoint("BOTTOMRIGHT", -1, 1)
@@ -864,6 +939,9 @@ function Form:Color(spec)
     swatch:SetScript("OnLeave", function(button) T.TintEdges(button.edges, "fieldEdge") end)
     swatch:SetScript("OnClick", function() chooseColor(self, row) end)
     row.control = swatch
+    row.place = function() swatch:ClearAllPoints(); swatch:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -row.shift, -6) end
+    row.place()
+    addRowButton(self, row)
     row.repaint = function() swatch:SetAlpha(row.locked and .4 or 1) end
     attachTip(self, row, row.frame)
     attachTip(self, row, swatch)
@@ -992,8 +1070,8 @@ end
 -- Buttons ------------------------------------------------------------------------------------
 function Form:Buttons(list)
     local T = theme()
-    local row = addRow(self, "Buttons", {})
-    row.entries = {}
+    local row = addRow(self, "Buttons", { anchor = list and list.anchor })
+    row.entries, row.buttons = {}, {}
     for index, entry in ipairs(list or {}) do
         local variant = (entry.variant == "primary" or entry.variant == "danger") and entry.variant or "secondary"
         local button = T.Button(row.frame, "", BUTTON_MIN, BUTTON_H, function(widget)
@@ -1003,6 +1081,7 @@ function Form:Buttons(list)
             Form.Tooltip(button, function() return resolve(self, entry.text) end, function() return resolve(self, entry.tip) end)
         end
         row.entries[index] = { spec = entry, button = button }
+        row.buttons[index] = button
     end
     row.control = row.frame
     row.anyVisible = function()
@@ -1062,15 +1141,111 @@ end
 function Form:Custom(spec)
     local row = addRow(self, "Custom", spec)
     row.control = row.frame
-    if spec.build then spec.build(row.frame, self) end
+    -- The row tells its usable width (it follows Form:SetWidth); the form is the third argument of build.
+    if spec.build then spec.build(row.frame, row.inner, self) end
     row.update = function()
-        if spec.refresh then spec.refresh(row.frame) end
+        if spec.refresh then spec.refresh(row.frame, row.inner) end
     end
     row.height = function()
         local value = type(spec.height) == "function" and spec.height() or spec.height
         return tonumber(value) or ROW
     end
     return row
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Free-standing controls: one select field or one input field in the look of the form rows, placed by the
+-- caller (a filter above a list, a footer bar). No row, no card, no change signal.
+-- ---------------------------------------------------------------------------------------------
+
+-- Form.Dropdown(parent, { width, options, get, set, translate, placeholder, placement, tr }) -> button.
+-- options: list of { value, text } or a function that returns it; placement "down" (default) or "up".
+-- button:Refresh() reads the value again, button:SetEnabled(on); the list is the one of the form rows
+-- (ten rows, then it rolls; a click elsewhere closes it; one open list per addon, see Form.ClosePopups()).
+function Form.Dropdown(parent, spec)
+    local T = theme()
+    spec = type(spec) == "table" and spec or {}
+    -- A form without rows: popup, choice and the one-list-per-addon rule are those of a Select row.
+    local owner = setmetatable({ ctx = {}, parent = parent, cards = {}, tr = type(spec.tr) == "function" and spec.tr or defaultTr }, Form)
+    local row = { kind = "Select", spec = spec, valueRow = false, indent = 0 }
+    local button
+    button = T.Button(parent, "", tonumber(spec.width) or SELECT_W, SELECT_H, function()
+        openPopup(owner, row)
+        button.popup = owner.popup
+    end, "secondary")
+    T.StyleDropdown(button)
+    T.AlignButtonText(button, 10, 28)
+    row.control = button
+    row.update = function()
+        button:SetText(selectText(owner, row))
+        local popup = owner.popup
+        if popup and popup.state and popup.state.row == row then
+            popup.state.options = optionList(row)
+            renderPopup(owner)
+        end
+    end
+    function button:Refresh() row.update() end
+    button:HookScript("OnHide", function()
+        local popup = owner.popup
+        if popup and popup.state and popup.state.row == row then owner:ClosePopups() end
+    end)
+    row.update()
+    return button
+end
+
+-- Form.Edit(parent, { width, maxLetters, numeric, placeholder, get, set, live, tr }) -> edit box.
+-- The value is written on Enter and when the field loses the focus; with live on every key. edit:Refresh()
+-- reads the value again (not while the field has the focus), edit:SetEnabled(on).
+function Form.Edit(parent, spec)
+    local T = theme()
+    spec = type(spec) == "table" and spec or {}
+    local texts = { tr = type(spec.tr) == "function" and spec.tr or defaultTr }
+    local edit = CreateFrame("EditBox", nil, parent, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    edit:SetAutoFocus(false); edit:SetMultiLine(false); edit:SetFontObject("GameFontHighlightSmall")
+    edit:SetSize(tonumber(spec.width) or INPUT_W, INPUT_H)
+    T.StyleEditBox(edit)
+    if spec.maxLetters and edit.SetMaxLetters then edit:SetMaxLetters(spec.maxLetters) end
+    edit:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
+    local hint
+    if spec.placeholder ~= nil then
+        hint = newText(edit, "caption", "muted", nil, nil, false)
+        hint:SetPoint("LEFT", edit, "LEFT", 8, 0); hint:SetPoint("RIGHT", edit, "RIGHT", -8, 0)
+        hint:SetText(resolve(texts, spec.placeholder))
+        edit.placeholder = hint
+    end
+    local function paintHint() if hint then hint:SetShown(edit:GetText() == "") end end
+    local function valueOf()
+        local text = edit:GetText()
+        if spec.numeric then return tonumber(text) end
+        return text
+    end
+    local function commit()
+        if not spec.set then return end
+        local value = valueOf()
+        if not spec.get or value ~= spec.get() then spec.set(value) end
+    end
+    edit:SetScript("OnTextChanged", function(_, user)
+        paintHint()
+        if user and spec.live and spec.set then spec.set(valueOf()) end
+    end)
+    edit:SetScript("OnEnterPressed", function(box) commit(); box:ClearFocus() end)
+    edit:SetScript("OnEditFocusLost", function() if not spec.live then commit() end end)
+    function edit:Refresh()
+        if spec.get and not self:HasFocus() then
+            local value = spec.get()
+            self:SetText(value == nil and "" or tostring(value))
+        end
+        paintHint()
+    end
+    local native = edit.SetEnabled
+    function edit:SetEnabled(on)
+        if type(native) == "function" then native(self, on)
+        elseif on and self.Enable then self:Enable()
+        elseif not on and self.Disable then self:Disable() end
+        if not on and self.ClearFocus then self:ClearFocus() end
+    end
+    paintHint()
+    return edit
 end
 
 -- ---------------------------------------------------------------------------------------------
@@ -1101,6 +1276,8 @@ function Form:Refresh()
                 else
                     row.frame:Hide()
                     row.placed = false
+                    -- A hidden note keeps no old text: it reads what it says now.
+                    if row.kind == "Note" then row.update() end
                 end
             end
             if #visibleRows == 0 then
@@ -1236,14 +1413,7 @@ function Form:ReleaseInput()
     end
     local session = self.colorSession
     self.colorSession = nil
-    if session and not session.closed then
-        session.closed = true
-        local picker = session.picker
-        local shown = type(picker.IsShown) ~= "function" or picker:IsShown()
-        if shown and (picker.swatchFunc == nil or picker.swatchFunc == session.swatchFunc) and type(picker.Hide) == "function" then
-            pcall(picker.Hide, picker)
-        end
-    end
+    if session and not session.closed then endColor(session, session.row.spec.cancelOnLeave == true) end
 end
 
 -- Every configuration key of the page: the static keys of all rows (visible or not) plus the keys the rows

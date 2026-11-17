@@ -197,26 +197,26 @@ function R.BuildPage(page,view)
     end})
     form:Select({key="readabilityPreset",label=tr("Preset","Preset"),enabled=function() return current()~=nil end,
         options=function()
-            local list={{"none",tr("Preset auswählen","Choose preset")}}
+            local list={}
             for _,id in ipairs(R.Presets) do list[#list+1]={id,R.Label(id)} end
             return list
         end,
-        get=function() return ui.candidate and ui.candidate.preset or "none" end,
-        set=function(id) if id=="none" then ui:Cancel() else ui:Choose(id) end end})
-    local buttons=form:Buttons({
+        placeholder=tr("Preset auswählen","Choose preset"),
+        get=function() return ui.candidate and ui.candidate.preset or nil end,
+        set=function(id) ui:Choose(id) end})
+    form:Buttons({anchor="readabilityActions",
         {text=tr("Übernehmen","Apply"),variant="primary",enabled=function() return ui.candidate~=nil end,onClick=function() ui:Apply() end},
         {text=tr("Abbrechen","Cancel"),enabled=function() return ui.candidate~=nil end,onClick=function() ui:Cancel() end},
     })
-    ui.apply,ui.cancel=buttons.entries[1].button,buttons.entries[2].button
     -- Noninteractive demo frames, drawn in the colours and sizes of the preset being compared.
     form:Custom({key="readabilityPreview",height=192,
         build=function(frame)
             ui.preview=R.CreatePreview(frame,0)
             ui.preview:ClearAllPoints();ui.preview:SetPoint("TOPLEFT",frame,"TOPLEFT",0,-6)
         end,
-        refresh=function(frame)
+        refresh=function(frame,width)
             local db=current()
-            ui.preview:Layout(form.inner)
+            ui.preview:Layout(width)
             if db then ui.preview:Refresh(ui.candidate and ui.candidate.settings or db) end
         end})
     form:Note({key="readabilityNote",text=tr("Beispiele ohne Live-Units. Aktivierung und Formate bleiben erhalten. Native Namen-Schrift und Framegrößen werden nicht verändert.",
@@ -228,8 +228,8 @@ function R.BuildPage(page,view)
             text:SetPoint("TOPLEFT",frame,"TOPLEFT",0,-6);text:SetJustifyH("LEFT");text:SetJustifyV("TOP");text:SetWordWrap(true)
             T.Font(text,"body","text");ui.changes=text
         end,
-        refresh=function(frame)
-            ui.changes:SetWidth(form.inner)
+        refresh=function(frame,width)
+            ui.changes:SetWidth(width)
             local db=current()
             if not db then ui.changes:SetText("");return end
             local lines={tr("Eigenschaft · Aktuell → Vorschau","Property · Current → Preview")}

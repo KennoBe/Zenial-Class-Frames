@@ -5,7 +5,7 @@ local addonName, NS = ...
 local U = { views = {} }
 NS.SettingsUI = U
 local Window, Form = NS.Window, NS.Form
-local callbacks, standalone, pending
+local callbacks, standalone
 local modes = { "off", "enemies", "teammates", "everyone" }
 local labels = {
     off = { "Aus", "Off" }, enemies = { "Nur Gegner", "Only enemies" },
@@ -32,7 +32,7 @@ U.Translate = translate
 
 local function settings() return callbacks and callbacks.GetSettings() or nil end
 local function ready() return settings() ~= nil end
-local loading = { "loading", tr("Wird geladen…", "Loading…") }
+local loading = tr("Wird geladen…", "Loading…")
 
 function U.Refresh()
     -- Hidden views refresh in their OnShow handler; frame refreshes during
@@ -44,54 +44,20 @@ function U.Refresh()
 end
 
 -- Colour picker -----------------------------------------------------------------------------------------------
--- The shared Form opens the picker and writes every step of it. Until the picker is accepted the pick is only a
--- preview: leaving the page, closing the window, another colour row or a preset puts the old colour back.
+-- The shared Form opens the picker and writes every step of it (cancelOnLeave rows): until the picker is accepted
+-- the pick is only a preview. Leaving the page, closing the window, another colour row or a preset puts the old
+-- colour back.
 local function hexOf(color)
     return string.format("#%02X%02X%02X", math.floor(color[1] * 255 + .5), math.floor(color[2] * 255 + .5),
         math.floor(color[3] * 255 + .5))
 end
 
-function U.CancelColorPicker(view)
-    local session = pending
-    if not session or (view and session.view ~= view) then return end
-    pending = nil
-    session.session.closed = true -- Its callbacks must not change colours any more.
-    local picker = session.picker
-    if picker.swatchFunc ~= session.session.swatchFunc then return end -- Another addon now owns the global picker.
-    callbacks.SetNameColor(session.category, session.original)
-    if type(picker.Hide) == "function" then picker:Hide() end
-    picker.swatchFunc, picker.cancelFunc = nil, nil
-    if picker.func == session.session.swatchFunc then picker.func = nil end
-end
+function U.CancelColorPicker() Form.CancelColor() end
 
--- Writes a colour of the picker and remembers the colour that was there before the first step of the session.
-local function writeColor(view, form, category, color)
-    local session = form.colorSession
-    if session and not session.closed and (not pending or pending.session ~= session) then
-        local picker = session.picker
-        if pending then callbacks.SetNameColor(pending.category, pending.original) end
-        local current = settings().nameColors[category]
-        pending = { view = view, form = form, category = category, session = session, picker = picker,
-            original = { current[1], current[2], current[3] } }
-        if type(picker.HookScript) == "function" and not picker.zenialClassFramesPickerHook then
-            picker:HookScript("OnHide", function()
-                if pending and pending.picker == picker then pending = nil end
-            end)
-            picker.zenialClassFramesPickerHook = true
-        end
-    end
-    callbacks.SetNameColor(category, color)
-end
-
--- Form of a page: the colour preview is cancelled with every release of the input fields (page change, close).
+-- Form of a page.
 function U.NewForm(page, view)
     local form = Form.New({ tr = translate, changed = function() U.Refresh() end }, page.content, view.formWidth)
     page.form = form
-    local release = form.ReleaseInput
-    form.ReleaseInput = function(self, ...)
-        U.CancelColorPicker(view)
-        return release(self, ...)
-    end
     page.refresh = function()
         form:Refresh()
         page.content:SetHeight(form:Height())
@@ -103,15 +69,15 @@ end
 local function modeOptions()
     local list = {}
     for _, mode in ipairs(modes) do list[#list + 1] = { mode, U.ModeLabel(mode) } end
-    if not ready() then list[#list + 1] = loading end
     return list
 end
 
 local function modeRow(form, key, label, field, setter, default, tip)
     form:Select({ key = key, label = label, tip = tip, options = modeOptions, default = default, enabled = ready,
+        placeholder = loading,
         get = function()
             local current = settings()
-            return current and current[field] or loading[1]
+            return current and current[field] or nil
         end,
         set = function(mode) setter(mode) end })
 end
@@ -159,35 +125,23 @@ local function buildGeneral(page, view)
             return current and current.nameColors[category] or { 1, 1, 1 }
         end
         -- Palette can be configured while name coloring is disabled.
-        local row = form:Color({ key = "nameColors." .. category, label = tr(entry[2], entry[3]),
+        form:Color({ key = "nameColors." .. category, label = tr(entry[2], entry[3]),
             default = NS.FrameSettings and NS.FrameSettings.DefaultNameColors[category], enabled = ready,
             tip = function() return hexOf(color()) end,
-            get = color,
-            set = function(rgb) writeColor(view, form, category, rgb) end })
-        -- A pick of the previous colour is put back first; without the client's picker there is a message.
-        local open = row.control:GetScript("OnClick")
-        row.control:SetScript("OnClick", function(...)
-            U.CancelColorPicker()
-            if not settings() then return end
-            if not ColorPickerFrame and C_AddOns and type(C_AddOns.LoadAddOn) == "function" then
-                pcall(C_AddOns.LoadAddOn, "Blizzard_ColorPickerFrame")
-            end
-            local picker = ColorPickerFrame
-            if not picker or type(picker.GetColorRGB) ~= "function" then
+            cancelOnLeave = true,
+            onUnavailable = function()
                 if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffffd100ZenialClassFrames:|r " ..
                     tr("Der WoW-Farbwähler ist nicht verfügbar.", "The WoW color picker is unavailable.")) end
-                return
-            end
-            open(...)
-        end)
+            end,
+            get = color,
+            set = function(rgb) callbacks.SetNameColor(category, rgb) end })
     end
-    local buttons = form:Buttons({ { text = tr("Default-Farben", "Default colors"), enabled = ready,
+    form:Buttons({ anchor = "defaultColors", { text = tr("Default-Farben", "Default colors"), enabled = ready,
         onClick = function()
             U.CancelColorPicker()
             callbacks.ResetNameColors()
             U.Refresh()
         end } })
-    view.defaultColors = buttons.entries[1].button
 end
 
 -- Portraits page ----------------------------------------------------------------------------------------------
@@ -216,15 +170,11 @@ local function buildPortraits(page, view)
         local scope = entry[1]
         form:Select({ key = "portrait." .. scope, label = tr(entry[2], entry[3]), default = "default", enabled = ready,
             options = function()
-                local list = { { "default", U.PortraitModeLabel("default") }, { "class", U.PortraitModeLabel("class") } }
-                if not ready() then list[#list + 1] = loading
-                elseif not portraitMode(scope) then list[#list + 1] = { "mixed", tr("Individuell", "Individual") } end
-                return list
+                return { { "default", U.PortraitModeLabel("default") }, { "class", U.PortraitModeLabel("class") } }
             end,
-            get = function()
-                if not ready() then return loading[1] end
-                return portraitMode(scope) or "mixed"
-            end,
+            -- Shown while the settings load, and while the three frames of "All frames" differ.
+            placeholder = function() return ready() and tr("Individuell", "Individual") or loading end,
+            get = function() return ready() and portraitMode(scope) or nil end,
             set = function(mode)
                 if not NS.Portraits.ValidMode(mode) then return end
                 if NS.Portraits.SetMode(scope, mode) then U.Refresh() end
