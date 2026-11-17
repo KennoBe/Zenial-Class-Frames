@@ -113,7 +113,7 @@ function T.SetGradient(texture, orientation, from, to, fromAlpha, toAlpha)
 end
 
 local function color(frame, method, key, alpha)
-    local c = T.colors[key] or T.colors.surface
+    local c = T.colors[key] or T.palette[key] or T.colors.surface
     if frame and frame[method] then frame[method](frame, c[1], c[2], c[3], alpha or c[4]) end
 end
 
