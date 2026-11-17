@@ -26,6 +26,7 @@ local GAP = 16                         -- between a label and its control
 local INDENT = 28                      -- rows that depend on a parent row
 local SELECT_W, SELECT_H = 260, 26
 local SLIDER_W, SLIDER_H, VALUE_W, VALUE_W_WIDE = 200, 16, 52, 80
+local SELECT_MIN, SLIDER_MIN, LABEL_MIN = 120, 110, 160  -- in a narrow form the control gives way to its label, which keeps LABEL_MIN
 local SEGMENT_W, SEGMENT_H = 300, 26
 local SWATCH_W, SWATCH_H = 40, 22
 local INPUT_W, INPUT_H = 260, 24
@@ -101,6 +102,11 @@ local function newText(parent, role, colorKey, width, height, wrap)
     theme().Font(fs, role, colorKey)
     return fs
 end
+
+-- Width of a select field and of a slider: the full size in every form wide enough for it (the label keeps
+-- LABEL_MIN), narrower in a small host, never below SELECT_MIN / SLIDER_MIN.
+local function selectWidth(row) return math.max(SELECT_MIN, math.min(SELECT_W, row.inner - GAP - LABEL_MIN)) end
+local function sliderWidth(row) return math.max(SLIDER_MIN, math.min(SLIDER_W, row.inner - row.valueWidth - 8 - GAP - LABEL_MIN)) end
 
 local function keyOf(spec)
     if type(spec.key) == "function" then return spec.key() end
@@ -523,10 +529,11 @@ function Form:Slider(spec)
     local T = theme()
     local row = addRow(self, "Slider", spec)
     local valueWidth = (spec.labels or spec.suffix or type(spec.format) == "function") and VALUE_W_WIDE or VALUE_W
+    row.valueWidth = valueWidth
     addLabels(self, row, 0, row.inner - SLIDER_W - valueWidth - 8 - GAP)
     row.span = SLIDER_W + valueWidth + 8
     local slider = CreateFrame("Slider", nil, row.frame)
-    slider:SetSize(SLIDER_W, SLIDER_H)
+    slider:SetSize(sliderWidth(row), SLIDER_H)
     slider:SetOrientation("HORIZONTAL")
     -- Without a template a slider is not mouse-active; the wheel belongs to the scrolling page.
     slider:EnableMouse(true)
@@ -545,6 +552,8 @@ function Form:Slider(spec)
     valueText:SetJustifyH("RIGHT")
     row.control, row.fill, row.thumb, row.valueText = slider, fill, thumb, valueText
     row.place = function()
+        local width = sliderWidth(row)
+        slider:SetWidth(width); row.span = width + valueWidth + 8
         slider:ClearAllPoints(); slider:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -(valueWidth + 8 + row.shift), -9)
         valueText:ClearAllPoints(); valueText:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -row.shift, -10)
     end
@@ -564,7 +573,7 @@ function Form:Slider(spec)
     local function paint(value)
         local low, high = bounds()
         local fraction = high > low and (value - low) / (high - low) or 0
-        fill:SetWidth(math.max(1, fraction * (SLIDER_W - 10) + 5))
+        fill:SetWidth(math.max(1, fraction * (sliderWidth(row) - 10) + 5))
         valueText:SetText(sliderText(self, spec, value))
     end
     -- While the thumb moves the fill and the value text follow; the value is saved when it is released, or at
@@ -747,7 +756,11 @@ function Form:Select(spec)
     T.AlignButtonText(button, 10, 28)
     if button.RegisterForClicks then button:RegisterForClicks("LeftButtonUp", "RightButtonUp") end
     row.control = button
-    row.place = function() button:ClearAllPoints(); button:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -row.shift, -4) end
+    row.place = function()
+        local width = selectWidth(row)
+        button:SetWidth(width); row.span = width
+        button:ClearAllPoints(); button:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -row.shift, -4)
+    end
     row.place()
     addRowButton(self, row)
     attachTip(self, row, row.frame)

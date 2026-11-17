@@ -301,6 +301,9 @@ function Window.New(spec, parent)
         return keys
     end
 
+    -- An embedded view lays out for at least this width; a smaller host cuts it. A host that is allowed to be
+    -- narrower than the addon manager's panel (a small window) passes its own minimum in spec.embeddedMinWidth.
+    local embeddedMin = (finite(spec.embeddedMinWidth) and spec.embeddedMinWidth >= 320) and spec.embeddedMinWidth or WM.embeddedMinWidth
     local view = { embedded = embedded, nav = {}, navGroups = {}, pageWidth = WM.pageWidth, formWidth = WM.formWidth }
     local pages, current = {}, nil
     local hasFooter = type(spec.footer) == "function"
@@ -367,7 +370,7 @@ function Window.New(spec, parent)
         else
             navMode = "tabs"
             local keys = visibleKeys()
-            local each = math.floor(WM.embeddedMinWidth / math.max(1, #keys))
+            local each = math.floor(embeddedMin / math.max(1, #keys))
             for _, key in ipairs(keys) do
                 if widthOf(measureBody, text(specs[key].title or key)) + WM.tabPad > each then navMode = "side"; break end
             end
@@ -530,7 +533,7 @@ function Window.New(spec, parent)
     -- width; what does not fit is cut, and the cut text is shown whole in a tooltip.
     local function layoutFooter()
         local width = frame:GetWidth()
-        if not (finite(width) and width > 0) then width = embedded and WM.embeddedMinWidth or (multi and WM.width or WM.widthSingle) end
+        if not (finite(width) and width > 0) then width = embedded and embeddedMin or (multi and WM.width or WM.widthSingle) end
         local versionSpace = 0
         if versionOnFrame and versionText() ~= "" then versionSpace = WM.versionWidth + SP.sm end
         local right = footerRight + versionSpace
@@ -670,13 +673,13 @@ function Window.New(spec, parent)
     -- Layout -----------------------------------------------------------------------------------------
     function view:Layout()
         local width, height = frame:GetWidth(), frame:GetHeight()
-        if not (finite(width) and width > 0) then width = embedded and WM.embeddedMinWidth or (multi and WM.width or WM.widthSingle) end
+        if not (finite(width) and width > 0) then width = embedded and embeddedMin or (multi and WM.width or WM.widthSingle) end
         if not (finite(height) and height > 0) then height = embedded and 440 or WM.height end
         local extra = hasFooter and (footerHeight + SP.sm) or 0
         local areaWidth, areaTop
         if embedded then
             -- Beside the side list the page area is narrower by the column and the gap.
-            areaWidth = math.max(WM.embeddedMinWidth, width) - contentX
+            areaWidth = math.max(embeddedMin, width) - contentX
             areaTop = (navMode == "tabs" and WM.tabHeight or 0) + SP.sm
             self.pageWidth = areaWidth - WM.contentGap
             self.formWidth = self.pageWidth - WM.formGap
