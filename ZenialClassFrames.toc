@@ -3,12 +3,15 @@
 ## Notes: Class colors, optional class portraits and stun countdowns, health/resource texts, readability and compatibility diagnostics
 ## Notes-deDE: Klassenfarben, optionale Klassenportraits und Stun-Ablaufanzeigen, HP-/Ressourcentexte, Lesbarkeit und Kompatibilitätsdiagnose
 ## Author: ZENIAL
-## Version: 1.8.0
+## Version: 1.9.0
 ## SavedVariables: ZenialClassFramesDB, ZenialMinimapDB
 ## IconTexture: Interface\AddOns\ZenialClassFrames\Media\Icon.tga
 ## X-License: MIT
 
 Theme.lua
+ThemeTokens.lua
+ThemeSkin.lua
+ThemeKit.lua
 Util.lua
 CommandOutput.lua
 ConflictMonitor.lua
