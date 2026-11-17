@@ -183,66 +183,78 @@ function R.CreatePreview(parent,y)
     panel.demos=demos
     return panel
 end
-function R.CreateSettings(view,parent)
-    local scroll=CreateFrame("ScrollFrame",nil,parent,"UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT",22,-view.contentTop);scroll:SetPoint("BOTTOMRIGHT",-42,view.embedded and 12 or 50)
-    local content=CreateFrame("Frame",nil,scroll);content:SetSize(416,800);scroll:SetScrollChild(content)
-    scroll:EnableMouseWheel(true);scroll:SetScript("OnMouseWheel",function(self,delta)
-        self:SetVerticalScroll(math.max(0,math.min(self:GetVerticalScrollRange(),self:GetVerticalScroll()-delta*35)))
-    end)
-    local T=NS.Theme
-    local title=T.Text(content,tr("Lesbarkeit","Readability"),"GameFontNormal","gold");title:SetPoint("TOPLEFT",8,-8)
-    local status=T.Text(content,"","GameFontHighlightSmall","muted");status:SetPoint("TOPLEFT",8,-32)
-    local select=T.Button(content,tr("Preset auswählen","Choose preset"),220,28,function() end);select:SetPoint("TOPLEFT",8,-60);T.StyleDropdown(select)
-    local menu=CreateFrame("Frame",nil,parent,BackdropTemplateMixin and "BackdropTemplate" or nil)
-    menu:SetPoint("TOPLEFT",select,"BOTTOMLEFT",0,-2);menu:SetSize(220,120);menu:SetFrameStrata("FULLSCREEN_DIALOG");menu:SetClampedToScreen(true);T.Panel(menu,"surface")
-    local preview=R.CreatePreview(content,-128)
-    local note=T.Text(content,tr("Beispiele ohne Live-Units. Aktivierung und Formate bleiben erhalten. Native Namen-Schrift und Framegrößen werden nicht verändert.",
-        "Examples without live units. Activation and formats are preserved. Native name fonts and frame sizes are unchanged."),"GameFontHighlightSmall","muted")
-    note:SetPoint("TOPLEFT",8,-320);note:SetHeight(60)
-    local changes=T.Text(content,"","GameFontHighlightSmall");changes:SetPoint("TOPLEFT",8,-390);changes:SetJustifyV("TOP")
-    local apply=T.Button(content,tr("Übernehmen","Apply"),140,28,function() end);apply:SetPoint("TOPLEFT",8,-96)
-    local cancel=T.Button(content,tr("Abbrechen","Cancel"),140,28,function() end);cancel:SetPoint("TOPLEFT",156,-96)
-    local ui={scroll=scroll,content=content,select=select,menu=menu,preview=preview,changes=changes,apply=apply,cancel=cancel}
-    function ui:Cancel() self.candidate=nil;self.message=nil;menu:Hide();self:Refresh() end
+-- Readability page of the settings window: choose a preset, compare it with the current values, apply or cancel.
+-- Nothing changes until "Apply"; leaving the page or closing the window ends the comparison.
+function R.BuildPage(page,view)
+    local T,U=NS.Theme,NS.SettingsUI
+    local form=U.NewForm(page,view)
+    local ui={form=form}
+    local function current() return callbacks and callbacks.GetSettings() end
+    form:Card()
+    form:Note({key="readabilityStatus",text=function()
+        local db=current()
+        return db and R.Status(db)..(ui.message and " · "..ui.message or "") or ""
+    end})
+    form:Select({key="readabilityPreset",label=tr("Preset","Preset"),enabled=function() return current()~=nil end,
+        options=function()
+            local list={{"none",tr("Preset auswählen","Choose preset")}}
+            for _,id in ipairs(R.Presets) do list[#list+1]={id,R.Label(id)} end
+            return list
+        end,
+        get=function() return ui.candidate and ui.candidate.preset or "none" end,
+        set=function(id) if id=="none" then ui:Cancel() else ui:Choose(id) end end})
+    local buttons=form:Buttons({
+        {text=tr("Übernehmen","Apply"),variant="primary",enabled=function() return ui.candidate~=nil end,onClick=function() ui:Apply() end},
+        {text=tr("Abbrechen","Cancel"),enabled=function() return ui.candidate~=nil end,onClick=function() ui:Cancel() end},
+    })
+    ui.apply,ui.cancel=buttons.entries[1].button,buttons.entries[2].button
+    -- Noninteractive demo frames, drawn in the colours and sizes of the preset being compared.
+    form:Custom({key="readabilityPreview",height=192,
+        build=function(frame)
+            ui.preview=R.CreatePreview(frame,0)
+            ui.preview:ClearAllPoints();ui.preview:SetPoint("TOPLEFT",frame,"TOPLEFT",0,-6)
+        end,
+        refresh=function(frame)
+            local db=current()
+            ui.preview:Layout(form.inner)
+            if db then ui.preview:Refresh(ui.candidate and ui.candidate.settings or db) end
+        end})
+    form:Note({key="readabilityNote",text=tr("Beispiele ohne Live-Units. Aktivierung und Formate bleiben erhalten. Native Namen-Schrift und Framegrößen werden nicht verändert.",
+        "Examples without live units. Activation and formats are preserved. Native name fonts and frame sizes are unchanged.")})
+    form:Custom({key="readabilityChanges",
+        height=function() return math.max(24,math.ceil(tonumber(ui.changes and ui.changes:GetStringHeight()) or 16)+12) end,
+        build=function(frame)
+            local text=frame:CreateFontString(nil,"OVERLAY","GameFontHighlight")
+            text:SetPoint("TOPLEFT",frame,"TOPLEFT",0,-6);text:SetJustifyH("LEFT");text:SetJustifyV("TOP");text:SetWordWrap(true)
+            T.Font(text,"body","text");ui.changes=text
+        end,
+        refresh=function(frame)
+            ui.changes:SetWidth(form.inner)
+            local db=current()
+            if not db then ui.changes:SetText("");return end
+            local lines={tr("Eigenschaft · Aktuell → Vorschau","Property · Current → Preview")}
+            for _,r in ipairs(R.GetChanges(db,ui.candidate)) do lines[#lines+1]=r.label..": "..r.current.." → "..r.preview end
+            if not ui.candidate then lines[#lines+1]=tr("Wähle ein Preset für den Vergleich.","Choose a preset to compare.") end
+            ui.changes:SetText(table.concat(lines,"\n"))
+        end})
+    local function refresh() page.refresh() end
+    function ui:Cancel() self.candidate=nil;self.message=nil;form:ClosePopups();refresh() end
     function ui:Choose(id)
-        local current=callbacks.GetSettings();if not current then return end
+        local db=current();if not db then return end
         NS.SettingsUI.CancelColorPicker()
-        self.message=nil;self.candidate=R.BuildPreview(current,id);menu:Hide();self:Refresh()
+        self.message=nil;self.candidate=R.BuildPreview(db,id);refresh()
     end
-    function select:Select(id) if self:IsEnabled() then ui:Choose(id) end end
-    select.rows={}
-    for i,id in ipairs(R.Presets) do
-        local value=id;local row=T.Button(menu,R.Label(id),212,28,function() select:Select(value) end)
-        row:SetPoint("TOPLEFT",4,-4-(i-1)*28);select.rows[i]=row
-    end
-    select:SetScript("OnClick",function() menu:SetShown(not menu:IsShown()) end)
-    apply:SetScript("OnClick",function()
-        if not ui.candidate then return end
+    function ui:Apply()
+        if not self.candidate then return end
         NS.SettingsUI.CancelColorPicker()
-        local id=ui.candidate.preset;local ok,reason=R.Apply(ui.candidate)
-        if ok then ui.candidate=nil;ui.message=nil
+        local id=self.candidate.preset;local ok,reason=R.Apply(self.candidate)
+        if ok then self.candidate=nil;self.message=nil
         elseif reason=="changed" then
-            ui.candidate=R.BuildPreview(callbacks.GetSettings(),id)
-            ui.message=tr("Einstellungen geändert; aktualisierte Vorschau erneut übernehmen.","Settings changed; apply the updated preview again.")
+            self.candidate=R.BuildPreview(callbacks.GetSettings(),id)
+            self.message=tr("Einstellungen geändert; aktualisierte Vorschau erneut übernehmen.","Settings changed; apply the updated preview again.")
         end
-        ui:Refresh()
-    end)
-    cancel:SetScript("OnClick",function() ui:Cancel() end)
-    function ui:Layout(width)
-        local w=math.max(300,width-64);content:SetWidth(w);preview:Layout(w-16);note:SetWidth(w-16);status:SetWidth(w-16);changes:SetWidth(w-16)
+        refresh()
     end
-    function ui:Refresh()
-        local current=callbacks.GetSettings();select:SetEnabled(current~=nil);apply:SetEnabled(self.candidate~=nil);cancel:SetEnabled(self.candidate~=nil)
-        if not current then return end
-        status:SetText(R.Status(current)..(self.message and " · "..self.message or ""))
-        select:SetText(self.candidate and R.Label(self.candidate.preset) or tr("Preset auswählen","Choose preset"))
-        preview:Refresh(self.candidate and self.candidate.settings or current)
-        local lines={tr("Eigenschaft · Aktuell → Vorschau","Property · Current → Preview")}
-        for _,r in ipairs(R.GetChanges(current,self.candidate)) do lines[#lines+1]=r.label..": "..r.current.." → "..r.preview end
-        if not self.candidate then lines[#lines+1]=tr("Wähle ein Preset für den Vergleich.","Choose a preset to compare.") end
-        changes:SetText(table.concat(lines,"\n"));changes:SetHeight(#lines*32);content:SetHeight(410+#lines*32)
-    end
-    menu:Hide();scroll:Hide();view.readability=ui
+    view.readability=ui
     return ui
 end

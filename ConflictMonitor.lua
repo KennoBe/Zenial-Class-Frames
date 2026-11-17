@@ -292,18 +292,24 @@ function M.Initialize(value)
         M.Schedule()
     end)
 end
-function M.CreateSettings(view,parent)
-    local scroll=CreateFrame("ScrollFrame",nil,parent,"UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT",22,-view.contentTop);scroll:SetPoint("BOTTOMRIGHT",-42,view.embedded and 12 or 50)
-    local content=CreateFrame("Frame",nil,scroll);scroll:SetScrollChild(content);content:SetSize(416,900)
-    scroll:EnableMouseWheel(true);scroll:SetScript("OnMouseWheel",function(self,delta)
-        self:SetVerticalScroll(math.max(0,math.min(self:GetVerticalScrollRange(),self:GetVerticalScroll()-delta*35)))
-    end)
-    local title=NS.Theme.Text(content,tr("Kompatibilität","Compatibility"),"GameFontNormal","gold");title:SetPoint("TOPLEFT",8,-8)
-    local recheck=NS.Theme.Button(content,tr("Erneut prüfen","Recheck"),180,28,function() M.Recheck() end);recheck:SetPoint("TOPLEFT",8,-36)
-    local report=NS.Theme.Text(content,"","GameFontHighlightSmall");report:SetPoint("TOPLEFT",8,-78);report:SetJustifyV("TOP")
-    local ui={scroll=scroll,content=content,recheck=recheck,report=report}
-    function ui:Layout(width) content:SetWidth(math.max(300,width-64));report:SetWidth(math.max(284,width-80)) end
-    function ui:Refresh() local lines=M.Diagnostics();report:SetText(table.concat(lines,"\n\n"));report:SetHeight(#lines*76);content:SetHeight(100+#lines*76) end
-    scroll:Hide();view.compatibility=ui;return ui
+-- Compatibility page of the settings window: the report of every module and a button to check again.
+function M.BuildPage(page,view)
+    local form=NS.SettingsUI.NewForm(page,view)
+    local ui={form=form}
+    form:Card()
+    local buttons=form:Buttons({{text=tr("Erneut prüfen","Recheck"),onClick=function() M.Recheck() end}})
+    ui.recheck=buttons.entries[1].button
+    form:Custom({key="compatibilityReport",
+        height=function() return math.max(24,math.ceil(tonumber(ui.report and ui.report:GetStringHeight()) or 16)+12) end,
+        build=function(frame)
+            local text=frame:CreateFontString(nil,"OVERLAY","GameFontHighlight")
+            text:SetPoint("TOPLEFT",frame,"TOPLEFT",0,-6);text:SetJustifyH("LEFT");text:SetJustifyV("TOP");text:SetWordWrap(true)
+            NS.Theme.Font(text,"body","text");ui.report=text
+        end,
+        refresh=function()
+            ui.report:SetWidth(form.inner)
+            ui.report:SetText(table.concat(M.Diagnostics(),"\n\n"))
+        end})
+    view.compatibility=ui
+    return ui
 end

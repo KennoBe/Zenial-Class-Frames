@@ -14,6 +14,7 @@ for _, id in ipairs(B.Formats) do validFormats[id] = true end
 for _, id in ipairs(B.Categories) do validCategories[id] = true end
 local defaults = { healthEnabled = false, healthFormat = "PERCENT", powerEnabled = false,
     powerFormat = "CURRENT_MAX", showAbsorbs = false, showStatus = true, fontSize = 11, tintAbsorbs = true }
+B.Defaults = defaults
 B.SettingKeys = { "healthEnabled", "healthFormat", "powerEnabled", "powerFormat", "showAbsorbs", "showStatus", "fontSize", "tintAbsorbs" }
 B.Scopes = { "common", "player", "target", "party", "focus", "pet", "targettarget", "nameplates" }
 function B.FontLimit(category) return category == "nameplates" and 11 or 18 end

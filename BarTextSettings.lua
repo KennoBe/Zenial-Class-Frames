@@ -1,163 +1,137 @@
 local _, NS = ...
-local S, B, T, L = {}, NS.BarText, NS.Theme, NS.BarTextLocale
+-- Bar text page of the settings window: one scope (all frames, player, target, ...) is edited at a time. Built with
+-- the shared Form; the sample texts are the only part drawn here.
+local S, B, L = {}, NS.BarText, NS.BarTextLocale
 NS.BarTextSettings = S
 
-function S.Create(view, parent, closeMenus)
-    local panel = CreateFrame("Frame", nil, parent, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    T.Panel(panel, "inset")
-    view.barTextSection = panel
+function S.BuildPage(page, view)
+    local U = NS.SettingsUI
+    local form = U.NewForm(page, view)
     local selected = "common"
-    local openMenu
-    local controls = {}
-    local function close()
-        if openMenu then openMenu:Hide(); openMenu = nil end
+    local function db() return S.GetSettings() end
+    local function plate() return selected == "nameplates" end
+    local function config()
+        local settings = db()
+        return settings and B.Config(settings, selected) or nil
     end
-    local function label(value, y)
-        local text = T.Text(panel, value, "GameFontHighlightSmall")
-        text:SetPoint("TOPLEFT", 16, y)
-        return text
+    local function editable()
+        local settings = db()
+        return settings ~= nil and (selected == "common" or settings.frames[selected].overwrite == true)
     end
-    local function dropdown(y, items, choose)
-        local button = T.Button(panel, "", 240, 25, function() end)
-        button:SetPoint("TOPLEFT", 16, y); T.StyleDropdown(button)
-        local menu = CreateFrame("Frame", nil, button, BackdropTemplateMixin and "BackdropTemplate" or nil)
-        menu:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -2)
-        menu:SetSize(240, #items * 25 + 8)
-        menu:SetFrameStrata("FULLSCREEN_DIALOG"); menu:SetFrameLevel(button:GetFrameLevel() + 20)
-        menu:SetClampedToScreen(true); T.Panel(menu, "surface")
-        button.rows = {}
-        for i, id in ipairs(items) do
-            local value = id
-            local row = T.Button(menu, L[id], 232, 25, function()
-                if button:IsEnabled() then close(); choose(value) end
-            end)
-            row:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 25)
-            button.rows[i] = row
+    local function ready() return db() ~= nil end
+    -- Inherited settings are greyed out; the reason is the hint of the card.
+    local function usable()
+        if editable() then return true end
+        return false, ready() and L.inheritedHint or nil
+    end
+    local function value(key, fallback)
+        return function()
+            local current = config()
+            if current == nil or current[key] == nil then return fallback end
+            return current[key]
         end
-        button:SetScript("OnClick", function()
-            local shown = menu:IsShown()
-            closeMenus(); close()
-            if not shown then openMenu = menu; menu:Show() end
-        end)
-        menu:Hide()
-        controls[#controls + 1] = button
-        return button
     end
-    local function check(key, y)
-        local button = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
-        button:SetSize(26, 26); button:SetPoint("TOPLEFT", 12, y); T.StyleCheckbox(button)
-        local text = T.Text(panel, L[key], "GameFontHighlightSmall")
-        text:SetPoint("LEFT", button, "RIGHT", 4, 0)
-        button.label = text
-        button:SetScript("OnClick", function()
-            closeMenus(); close()
-            B.Set(selected, key, button:GetChecked() == true)
-        end)
-        controls[#controls + 1] = button
-        return button
+    local function write(key) return function(setting) B.Set(selected, key, setting) end end
+    local function formatOptions()
+        local list = {}
+        for _, id in ipairs(B.Formats) do list[#list + 1] = { id, L[id] } end
+        return list
     end
-    local category = dropdown(-12, B.Scopes, function(id) selected = id; view:Refresh() end)
-    view.barTextCategory = category
-    local overwrite = check("overwrite", -45)
-    local useForAll = T.Button(panel, L.useForAll, 256, 25, function() closeMenus();close();B.Set("common","overwrite",false) end)
-    useForAll:SetPoint("TOPLEFT",16,-45)
-    local inheritanceHint = label(L.sharedHint, -77)
-    inheritanceHint:SetHeight(40); T.Tint(inheritanceHint, "SetTextColor", "dim")
-    label(L.general, -123)
-    local health = check("healthEnabled", -140)
-    local power = check("powerEnabled", -166)
-    local onlyTarget = check("onlyTarget", -166)
-    label(L.healthFormat, -199)
-    local healthFormat = dropdown(-216, B.Formats, function(id) B.Set(selected, "healthFormat", id) end)
-    local absorbs = check("showAbsorbs", -245)
-    local status = check("showStatus", -271)
-    local powerLabel = label(L.powerFormat, -306)
-    local powerFormat = dropdown(-323, B.Formats, function(id) B.Set(selected, "powerFormat", id) end)
-    label(L.appearance, -358)
-    local sizeLabel = label(L.fontSize, -383)
-    local sizes = {}
-    for i, offset in ipairs({ -1, 1 }) do
-        local step = offset
-        local button = T.Button(panel, offset < 0 and "−" or "+", 30, 24, function()
-            local db = S.GetSettings()
-            if db then B.Set(selected, "fontSize", math.max(8, math.min(B.FontLimit(selected), math.min(B.FontLimit(selected), B.Config(db, selected).fontSize) + step))) end
-        end)
-        button:SetPoint("TOPRIGHT", -16 - (2 - i) * 36, -376)
-        -- Icon-only stepper: describe it on hover.
-        button.tip = offset < 0 and L.fontSmaller or L.fontLarger
-        button:HookScript("OnEnter", function(self)
-            if GameTooltip and GameTooltip.SetOwner then
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetText(self.tip); GameTooltip:Show()
-            end
-        end)
-        button:HookScript("OnLeave", function() if GameTooltip and GameTooltip.Hide then GameTooltip:Hide() end end)
-        sizes[#sizes + 1] = button; controls[#controls + 1] = button
+
+    -- Scope and inheritance -------------------------------------------------------------------------------------
+    form:Card()
+    form:Select({ key = "barTextScope", label = NS.Util.Tr("Einstellungen für", "Settings for"), default = "common", enabled = ready,
+        options = function()
+            local list = {}
+            for _, id in ipairs(B.Scopes) do list[#list + 1] = { id, L[id] } end
+            return list
+        end,
+        get = function() return selected end,
+        set = function(id) selected = id; U.Refresh() end })
+    form:Toggle({ key = "overwrite", label = L.overwrite, default = false, enabled = ready,
+        visible = function() return selected ~= "common" end,
+        get = function()
+            local settings = db()
+            return settings ~= nil and selected ~= "common" and settings.frames[selected].overwrite == true
+        end,
+        set = write("overwrite") })
+    local useForAll = form:Buttons({ { text = L.useForAll, enabled = ready,
+        visible = function() return selected == "common" end,
+        onClick = function() B.Set("common", "overwrite", false) end } })
+    form:Note({ key = "inheritanceHint", text = function()
+        return selected == "common" and L.sharedHint or editable() and L.overwriteHint or L.inheritedHint
+    end })
+
+    -- Texts ---------------------------------------------------------------------------------------------------------
+    form:Card(L.general)
+    form:Toggle({ key = "healthEnabled", label = function() return plate() and L.nameplateEnabled or L.healthEnabled end,
+        default = B.Defaults.healthEnabled, enabled = usable, get = value("healthEnabled", false), set = write("healthEnabled") })
+    form:Toggle({ key = "powerEnabled", label = L.powerEnabled, default = B.Defaults.powerEnabled, enabled = usable,
+        visible = function() return not plate() end, get = value("powerEnabled", false), set = write("powerEnabled") })
+    form:Toggle({ key = "onlyTarget", label = L.onlyTarget, default = false, enabled = ready,
+        visible = plate,
+        get = function()
+            local settings = db()
+            return settings ~= nil and settings.frames.nameplates.onlyTarget == true
+        end,
+        set = write("onlyTarget") })
+    form:Select({ key = "healthFormat", label = L.healthFormat, default = B.Defaults.healthFormat, enabled = usable,
+        options = formatOptions, get = value("healthFormat", B.Defaults.healthFormat), set = write("healthFormat") })
+    form:Toggle({ key = "showAbsorbs", label = L.showAbsorbs, default = B.Defaults.showAbsorbs, enabled = usable,
+        get = value("showAbsorbs", false), set = write("showAbsorbs") })
+    form:Toggle({ key = "showStatus", label = L.showStatus, default = B.Defaults.showStatus, enabled = usable,
+        get = value("showStatus", true), set = write("showStatus") })
+    form:Select({ key = "powerFormat", label = L.powerFormat, default = B.Defaults.powerFormat, enabled = usable,
+        visible = function() return not plate() end,
+        options = formatOptions, get = value("powerFormat", B.Defaults.powerFormat), set = write("powerFormat") })
+
+    -- Appearance and samples ------------------------------------------------------------------------------------------
+    form:Card(L.appearance)
+    form:Slider({ key = "fontSize", label = L.fontSize, min = 8, max = function() return B.FontLimit(selected) end, step = 1,
+        default = B.Defaults.fontSize, enabled = usable,
+        get = function()
+            local current = config()
+            return current and math.min(current.fontSize, B.FontLimit(selected)) or B.Defaults.fontSize
+        end,
+        set = write("fontSize") })
+    form:Toggle({ key = "tintAbsorbs", label = L.tintAbsorbs, default = B.Defaults.tintAbsorbs, enabled = usable,
+        get = value("tintAbsorbs", true), set = write("tintAbsorbs") })
+    -- A sample is drawn in the size, outline and shadow of the real text; it exists with no unit and with texts off.
+    local function sample(key, label, formatKey, absorbs, visible)
+        local text
+        return form:Custom({ key = key, visible = visible,
+            height = function()
+                local current = config()
+                return math.max(24, (current and math.min(current.fontSize, B.FontLimit(selected)) or 11) + 12)
+            end,
+            build = function(frame)
+                text = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                text:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -6)
+                text:SetJustifyH("LEFT"); text:SetJustifyV("TOP")
+                frame.sample = text
+            end,
+            refresh = function()
+                local current = config()
+                if not current then text:SetText(""); return end
+                local size = math.min(current.fontSize, B.FontLimit(selected))
+                text:SetText(label .. ": " .. B.Preview(current[formatKey], absorbs and current.showAbsorbs,
+                    absorbs and current.tintAbsorbs))
+                text:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", size, B.FontFlags(selected))
+                text:SetShadowOffset(plate() and .5 or 0, plate() and -.5 or 0)
+                text:SetShadowColor(0, 0, 0, plate() and .7 or 0)
+                text:SetTextColor(1, 1, 1)
+            end })
     end
-    local tint = check("tintAbsorbs", -407)
-    local sampleHealth = label("", -444)
-    local samplePower = label("", -467)
-    local hint = label(L.sizeHint, -497)
-    hint:SetHeight(38); T.Tint(hint, "SetTextColor", "dim")
-    local nativeHint = label(L.nativeHint, -537)
-    nativeHint:SetHeight(38); T.Tint(nativeHint, "SetTextColor", "dim")
-    local warning = label("", -577)
-    warning:SetHeight(64); T.Tint(warning, "SetTextColor", "warning")
-    panel:Hide()
-    panel:SetScript("OnHide", close)
-    function view:RefreshBarText()
-        local db = S.GetSettings()
-        local editable = db and (selected == "common" or db.frames[selected].overwrite)
-        for _, control in ipairs(controls) do control:SetEnabled(editable == true) end
-        category:SetEnabled(db ~= nil); overwrite:SetEnabled(db ~= nil)
-        local plate = selected == "nameplates"
-        onlyTarget:SetShown(plate); onlyTarget.label:SetShown(plate); onlyTarget:SetEnabled(db ~= nil)
-        power:SetShown(not plate); power.label:SetShown(not plate)
-        powerFormat:SetShown(not plate); powerLabel:SetShown(not plate); samplePower:SetShown(not plate)
-        health.label:SetText(plate and L.nameplateEnabled or L.healthEnabled)
-        hint:SetText(plate and L.nameplateHint or L.sizeHint)
-        category:SetText(L[selected]); category.value = selected
-        overwrite:SetShown(selected ~= "common")
-        overwrite.label:SetShown(selected ~= "common")
-        useForAll:SetShown(selected == "common");useForAll:SetEnabled(db ~= nil)
-        inheritanceHint:SetText(selected == "common" and L.sharedHint or editable and L.overwriteHint or L.inheritedHint)
-        if not db then return end
-        local config = B.Config(db, selected)
-        onlyTarget:SetChecked(db.frames.nameplates.onlyTarget)
-        overwrite:SetChecked(selected ~= "common" and db.frames[selected].overwrite)
-        health:SetChecked(config.healthEnabled); power:SetChecked(config.powerEnabled)
-        absorbs:SetChecked(config.showAbsorbs); status:SetChecked(config.showStatus)
-        tint:SetChecked(config.tintAbsorbs)
-        healthFormat:SetText(L[config.healthFormat]); healthFormat.value = config.healthFormat
-        powerFormat:SetText(L[config.powerFormat]); powerFormat.value = config.powerFormat
-        local size = math.min(config.fontSize, B.FontLimit(selected))
-        sizeLabel:SetText(L.fontSize .. ": " .. size)
-        -- Preview always exists, even with no unit and while text is disabled.
-        sampleHealth:SetText(L.previewHealth .. ": " .. B.Preview(config.healthFormat, config.showAbsorbs, config.tintAbsorbs))
-        samplePower:SetText(L.previewPower .. ": " .. B.Preview(config.powerFormat, false))
-        for _, text in ipairs({sampleHealth, samplePower}) do
-            text:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", size, B.FontFlags(selected))
-            text:SetShadowOffset(plate and .5 or 0, plate and -.5 or 0)
-            text:SetShadowColor(0, 0, 0, plate and .7 or 0)
-            text:SetTextColor(1, 1, 1)
-        end
+    local previewHealth = sample("previewHealth", L.previewHealth, "healthFormat", true)
+    local previewPower = sample("previewPower", L.previewPower, "powerFormat", false, function() return not plate() end)
+    form:Note({ key = "sizeHint", text = function() return plate() and L.nameplateHint or L.sizeHint end })
+    form:Note({ key = "nativeHint", text = L.nativeHint })
+    form:Note({ key = "barTextWarning", tone = "warning", text = function()
         local unavailable = B.Unavailable()
-        warning:SetText(unavailable and L.unavailable .. unavailable or B.deferred and L.deferred or "")
-    end
-    function view:LayoutBarText()
-        local width = math.max(300, math.min(600, view.frame:GetWidth() - 64))
-        panel:ClearAllPoints(); panel:SetPoint("TOPLEFT", 0, 0)
-        panel:SetSize(width, 650)
-        -- Both settings hosts share the same scroll body on this tab.
-        category:SetWidth(width - 32); healthFormat:SetWidth(width - 32); powerFormat:SetWidth(width - 32)
-        sampleHealth:SetWidth(width - 32); samplePower:SetWidth(width - 32)
-        hint:SetWidth(width - 32); nativeHint:SetWidth(width - 32); warning:SetWidth(width - 32)
-        inheritanceHint:SetWidth(width - 32)
-    end
-    view.barTextControls = { overwrite = overwrite, useForAll = useForAll, inheritanceHint = inheritanceHint,
-        healthEnabled = health, powerEnabled = power, healthFormat = healthFormat, onlyTarget = onlyTarget,
-        powerFormat = powerFormat, showAbsorbs = absorbs, showStatus = status, tintAbsorbs = tint,
-        sizes = sizes, previewHealth = sampleHealth, previewPower = samplePower }
-    return panel, close
+        return unavailable and L.unavailable .. unavailable or B.deferred and L.deferred or ""
+    end })
+
+    view.barText = { useForAll = useForAll.entries[1].button, previewHealth = previewHealth, previewPower = previewPower }
 end
 function S.Initialize(callbacks)
     S.GetSettings = function()

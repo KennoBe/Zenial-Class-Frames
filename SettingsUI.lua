@@ -1,8 +1,11 @@
-local _, NS = ...
+local addonName, NS = ...
+-- Settings window of ClassFrames, built from the shared Window and Form. One page description fills the
+-- standalone window (/zcf) and the view embedded in the Community addon manager. The pages of the bar texts,
+-- the readability presets and the compatibility check are built by their own modules (BuildPage).
 local U = { views = {} }
 NS.SettingsUI = U
-local T = NS.Theme
-local callbacks, standalone, openMenu, activePicker
+local Window, Form = NS.Window, NS.Form
+local callbacks, standalone, pending
 local modes = { "off", "enemies", "teammates", "everyone" }
 local labels = {
     off = { "Aus", "Off" }, enemies = { "Nur Gegner", "Only enemies" },
@@ -18,10 +21,19 @@ function U.PortraitModeLabel(mode)
     if mode == "class" then return tr("Klassenicon", "Class icon") end
     return ""
 end
-local function closeMenu()
-    if openMenu then openMenu:Hide(); openMenu = nil end
-end
 function U.Initialize(value) callbacks = value end
+
+-- Texts the addon hands to the shared parts: a plain string, or a { de, en } pair.
+local function translate(value)
+    if type(value) == "table" then return tr(value[1], value[2]) end
+    return value
+end
+U.Translate = translate
+
+local function settings() return callbacks and callbacks.GetSettings() or nil end
+local function ready() return settings() ~= nil end
+local loading = { "loading", tr("Wird geladen…", "Loading…") }
+
 function U.Refresh()
     -- Hidden views refresh in their OnShow handler; frame refreshes during
     -- combat must not rebuild closed settings pages.
@@ -31,451 +43,271 @@ function U.Refresh()
     end
 end
 
+-- Colour picker -----------------------------------------------------------------------------------------------
+-- The shared Form opens the picker and writes every step of it. Until the picker is accepted the pick is only a
+-- preview: leaving the page, closing the window, another colour row or a preset puts the old colour back.
+local function hexOf(color)
+    return string.format("#%02X%02X%02X", math.floor(color[1] * 255 + .5), math.floor(color[2] * 255 + .5),
+        math.floor(color[3] * 255 + .5))
+end
+
 function U.CancelColorPicker(view)
-    local session = activePicker
+    local session = pending
     if not session or (view and session.view ~= view) then return end
-    activePicker = nil
+    pending = nil
+    session.session.closed = true -- Its callbacks must not change colours any more.
     local picker = session.picker
-    if picker.swatchFunc ~= session.apply then return end -- Another addon now owns the global picker.
+    if picker.swatchFunc ~= session.session.swatchFunc then return end -- Another addon now owns the global picker.
     callbacks.SetNameColor(session.category, session.original)
     if type(picker.Hide) == "function" then picker:Hide() end
     picker.swatchFunc, picker.cancelFunc = nil, nil
-    if picker.func == session.apply then picker.func = nil end
+    if picker.func == session.session.swatchFunc then picker.func = nil end
 end
 
-local function chooseColor(view, category)
-    closeMenu()
-    U.CancelColorPicker()
-    local settings = callbacks.GetSettings()
-    if not settings then return end
-    if not ColorPickerFrame and C_AddOns and type(C_AddOns.LoadAddOn) == "function" then
-        pcall(C_AddOns.LoadAddOn, "Blizzard_ColorPickerFrame")
+-- Writes a colour of the picker and remembers the colour that was there before the first step of the session.
+local function writeColor(view, form, category, color)
+    local session = form.colorSession
+    if session and not session.closed and (not pending or pending.session ~= session) then
+        local picker = session.picker
+        if pending then callbacks.SetNameColor(pending.category, pending.original) end
+        local current = settings().nameColors[category]
+        pending = { view = view, form = form, category = category, session = session, picker = picker,
+            original = { current[1], current[2], current[3] } }
+        if type(picker.HookScript) == "function" and not picker.zenialClassFramesPickerHook then
+            picker:HookScript("OnHide", function()
+                if pending and pending.picker == picker then pending = nil end
+            end)
+            picker.zenialClassFramesPickerHook = true
+        end
     end
-    local picker = ColorPickerFrame
-    if not picker or type(picker.GetColorRGB) ~= "function" then
-        if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffffd100ZenialClassFrames:|r " ..
-            tr("Der WoW-Farbwähler ist nicht verfügbar.", "The WoW color picker is unavailable.")) end
-        return
-    end
-    local color = settings.nameColors[category]
-    local session = { picker = picker, view = view, category = category,
-        original = { color[1], color[2], color[3] } }
-    session.apply = function()
-        if activePicker ~= session then return end
-        local ok, r, g, b = pcall(picker.GetColorRGB, picker)
-        if ok then callbacks.SetNameColor(category, { r, g, b }) end
-    end
-    local cancel = function()
-        if activePicker ~= session then return end
-        activePicker = nil
-        callbacks.SetNameColor(category, session.original)
-    end
-    local info = { r = color[1], g = color[2], b = color[3], hasOpacity = false,
-        swatchFunc = session.apply, cancelFunc = cancel }
-    if type(picker.HookScript) == "function" and not picker.zenialClassFramesPickerHook then
-        picker:HookScript("OnHide", function()
-            if activePicker and activePicker.picker == picker then activePicker = nil end
-        end)
-        picker.zenialClassFramesPickerHook = true
-    end
-    activePicker = session
-    if type(picker.SetupColorPickerAndShow) == "function" then
-        local ok = pcall(picker.SetupColorPickerAndShow, picker, info)
-        if ok then return end
-    end
-    -- Older clients expose direct RGB methods instead of SetupColorPickerAndShow.
-    if type(picker.SetColorRGB) == "function" and type(picker.Show) == "function" then
-        if type(picker.Hide) == "function" then picker:Hide() end
-        activePicker = session
-        picker.func, picker.swatchFunc, picker.cancelFunc = session.apply, session.apply, cancel
-        picker.hasOpacity, picker.opacityFunc = false, nil
-        picker.previousValues = { r = color[1], g = color[2], b = color[3] }
-        local ok = pcall(picker.SetColorRGB, picker, color[1], color[2], color[3])
-        if ok then picker:Show(); return end
-    end
-    U.CancelColorPicker()
+    callbacks.SetNameColor(category, color)
 end
 
-function U.Create(parent, embedded)
-    local view = {embedded=embedded==true}
-    local frame = CreateFrame("Frame", not embedded and "ZenialClassFramesWindow" or nil,
-        parent or UIParent, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    view.frame = frame
-    frame:SetSize(480, embedded and 400 or 672)
-    if embedded then
-        T.Panel(frame, "surface")
-    else
-        frame:SetPoint("CENTER")
-        frame:SetFrameStrata("DIALOG")
-        frame:SetClampedToScreen(true)
-        frame:SetMovable(true)
-        frame:EnableMouse(true)
-        frame:RegisterForDrag("LeftButton")
-        frame:SetScript("OnDragStart", frame.StartMoving)
-        frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-        T.Shell(frame)
-        local close = T.Button(frame, tr("Schließen", "Close"), 90, 26, function() frame:Hide() end)
-        close:SetPoint("BOTTOMRIGHT", -18, 16)
-        if UISpecialFrames then UISpecialFrames[#UISpecialFrames + 1] = "ZenialClassFramesWindow" end
+-- Form of a page: the colour preview is cancelled with every release of the input fields (page change, close).
+function U.NewForm(page, view)
+    local form = Form.New({ tr = translate, changed = function() U.Refresh() end }, page.content, view.formWidth)
+    page.form = form
+    local release = form.ReleaseInput
+    form.ReleaseInput = function(self, ...)
+        U.CancelColorPicker(view)
+        return release(self, ...)
     end
-    -- Embedded, the host's tab already names the addon, so tabs and pages move up by its height.
-    view.contentTop = embedded and 44 or 82
-    local tabTop = embedded and -10 or -48
-    if not embedded then
-        local heading = T.Text(frame, "ZenialClassFrames", "GameFontNormalLarge", "gold")
-        heading:SetPoint("TOPLEFT", 22, -22)
+    page.refresh = function()
+        form:Refresh()
+        page.content:SetHeight(form:Height())
     end
-    local function section(title)
-        local panel = CreateFrame("Frame", nil, frame, BackdropTemplateMixin and "BackdropTemplate" or nil)
-        T.Panel(panel, "inset")
-        local titleLabel = T.Text(panel, title, "GameFontNormal", "gold")
-        titleLabel:SetPoint("TOPLEFT", 18, -16)
-        return panel
-    end
-    local display = section(tr("Anzeige", "Display"))
-    local palette = section(tr("Namensfarben", "Name colors"))
-    view.displaySection, view.colorSection = display, palette
-    local frameColors = CreateFrame("CheckButton", nil, display, "UICheckButtonTemplate")
-    frameColors:SetSize(28,28); frameColors:SetPoint("TOPLEFT",14,-42); T.StyleCheckbox(frameColors)
-    local frameColorsLabel = T.Text(display,tr("HP-Balken: Klassenfarben","Health bars: class colors"))
-    frameColorsLabel:SetPoint("LEFT",frameColors,"RIGHT",6,0)
-    frameColors:SetScript("OnClick",function(self) callbacks.SetUnitFrameColors(self:GetChecked()==true) end)
-    view.unitFrameColors = frameColors
-    local check = CreateFrame("CheckButton", nil, display, "UICheckButtonTemplate")
-    check:SetSize(28, 28); check:SetPoint("TOPLEFT", 14, -74)
-    T.StyleCheckbox(check)
-    local checkLabel = T.Text(display, tr("Gruppenlevel anzeigen", "Show group levels"))
-    checkLabel:SetPoint("LEFT", check, "RIGHT", 6, 0)
-    check:SetScript("OnClick", function(self) callbacks.SetGroupLevel(self:GetChecked() == true) end)
-    view.groupLevel = check
+    return form
+end
 
-    local threat = CreateFrame("CheckButton", nil, display, "UICheckButtonTemplate")
-    threat:SetSize(28,28); threat:SetPoint("TOPLEFT",14,-106); T.StyleCheckbox(threat)
-    local threatLabel = T.Text(display,tr("Blizzard-Aggroanzeige (Prozent)","Blizzard threat indicator (percent)"))
-    threatLabel:SetPoint("LEFT",threat,"RIGHT",6,0)
-    threat:SetScript("OnClick",function(self) callbacks.SetThreatNumeric(self:GetChecked()==true) end)
-    view.threatNumeric = threat
+-- General page ------------------------------------------------------------------------------------------------
+local function modeOptions()
+    local list = {}
+    for _, mode in ipairs(modes) do list[#list + 1] = { mode, U.ModeLabel(mode) } end
+    if not ready() then list[#list + 1] = loading end
+    return list
+end
 
-    local label = T.Text(display, tr("Nameplate-HP: Klassenfarben", "Nameplate health: class colors"))
-    label:SetPoint("TOPLEFT", 18, -144)
-    local control = T.Button(display, "", 280, 28, function() end)
-    control:SetPoint("TOPLEFT", 18, -166)
-    T.StyleDropdown(control)
-    view.nameplateMode = control
-    local menu = CreateFrame("Frame", nil, control, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    menu:SetSize(280, 120); menu:SetPoint("TOPLEFT", control, "BOTTOMLEFT", 0, -2)
-    menu:SetClampedToScreen(true); menu:SetFrameStrata("FULLSCREEN_DIALOG")
-    menu:SetFrameLevel(control:GetFrameLevel() + 20)
-    T.Panel(menu, "surface")
-    control.rows = {}
-    function control:Select(mode)
-        if not self:IsEnabled() or not labels[mode] then return end
-        closeMenu()
-        callbacks.SetNameplateMode(mode)
-    end
-    for i, mode in ipairs(modes) do
-        local value = mode
-        local row = T.Button(menu, U.ModeLabel(value), 272, 28, function() control:Select(value) end)
-        row:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 28)
-        control.rows[i] = row
-    end
-    menu:Hide()
-    control:SetScript("OnClick", function()
-        if menu:IsShown() then closeMenu() else closeMenu(); menu:Show(); openMenu = menu end
-    end)
-    local rolesLabel = T.Text(display, tr("Nameplates: Rollenicons", "Nameplates: role icons"))
-    rolesLabel:SetPoint("TOPLEFT", 18, -202)
-    local roles = T.Button(display, "", 280, 28, function() end)
-    roles:SetPoint("TOPLEFT", 18, -224); T.StyleDropdown(roles)
-    view.nameplateRoleMode = roles
-    local rolesMenu = CreateFrame("Frame", nil, roles, BackdropTemplateMixin and "BackdropTemplate" or nil)
-    rolesMenu:SetSize(280, 120); rolesMenu:SetPoint("TOPLEFT", roles, "BOTTOMLEFT", 0, -2)
-    rolesMenu:SetClampedToScreen(true); rolesMenu:SetFrameStrata("FULLSCREEN_DIALOG")
-    rolesMenu:SetFrameLevel(roles:GetFrameLevel() + 20); T.Panel(rolesMenu, "surface")
-    roles.rows = {}
-    function roles:Select(mode)
-        if not self:IsEnabled() or not labels[mode] then return end
-        closeMenu(); callbacks.SetNameplateRoleMode(mode)
-    end
-    for i, mode in ipairs(modes) do
-        local value = mode
-        local row = T.Button(rolesMenu, U.ModeLabel(value), 272, 28, function() roles:Select(value) end)
-        row:SetPoint("TOPLEFT", 4, -4 - (i - 1) * 28); roles.rows[i] = row
-    end
-    rolesMenu:Hide()
-    roles:SetScript("OnClick", function()
-        if rolesMenu:IsShown() then closeMenu() else closeMenu(); rolesMenu:Show(); openMenu = rolesMenu end
-    end)
-    roles:SetScript("OnEnter", function(self)
-        if not GameTooltip then return end
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText(tr("Kreuz: Heiler · Schild: Tank · Schwert: DD", "Cross: healer · shield: tank · sword: DPS"))
-        GameTooltip:AddLine(tr("Unbekannte oder geschützte Rollen bleiben ausgeblendet, besonders bei Gegnern.",
-            "Unknown or restricted roles stay hidden, especially for enemies."), 1, 1, 1, true)
-        GameTooltip:Show()
-    end)
-    roles:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
-    local names = CreateFrame("CheckButton", nil, palette, "UICheckButtonTemplate")
-    names:SetSize(28, 28); names:SetPoint("TOPLEFT", 14, -42)
-    T.StyleCheckbox(names)
-    local namesLabel = T.Text(palette, tr("Nach Zugehörigkeit färben", "Color by affiliation"))
-    namesLabel:SetPoint("LEFT", names, "RIGHT", 6, 0)
-    names:SetScript("OnClick", function(self)
-        U.CancelColorPicker()
-        callbacks.SetColorPlayerNames(self:GetChecked() == true)
-    end)
-    view.colorPlayerNames = names
-    view.colorButtons = {}
+local function modeRow(form, key, label, field, setter, default, tip)
+    form:Select({ key = key, label = label, tip = tip, options = modeOptions, default = default, enabled = ready,
+        get = function()
+            local current = settings()
+            return current and current[field] or loading[1]
+        end,
+        set = function(mode) setter(mode) end })
+end
+
+local function buildGeneral(page, view)
+    local form = U.NewForm(page, view)
+    form:Card(tr("Anzeige", "Display"))
+    form:Toggle({ key = "colorUnitFrames", label = tr("HP-Balken: Klassenfarben", "Health bars: class colors"),
+        default = true, enabled = ready,
+        get = function() local current = settings(); return current and current.colorUnitFrames == true or false end,
+        set = function(value) callbacks.SetUnitFrameColors(value) end })
+    form:Toggle({ key = "showGroupLevel", label = tr("Gruppenlevel anzeigen", "Show group levels"),
+        default = true, enabled = ready,
+        get = function() local current = settings(); return current and current.showGroupLevel == true or false end,
+        set = function(value) callbacks.SetGroupLevel(value) end })
+    form:Toggle({ key = "threatNumeric",
+        label = tr("Blizzard-Aggroanzeige (Prozent)", "Blizzard threat indicator (percent)"),
+        enabled = function() return ready() and callbacks.GetThreatNumeric() ~= nil end,
+        get = function() return callbacks.GetThreatNumeric() == true end,
+        set = function(value) callbacks.SetThreatNumeric(value) end })
+    modeRow(form, "nameplateMode", tr("Nameplate-HP: Klassenfarben", "Nameplate health: class colors"),
+        "nameplateMode", function(mode) callbacks.SetNameplateMode(mode) end, "everyone")
+    modeRow(form, "nameplateRoleMode", tr("Nameplates: Rollenicons", "Nameplates: role icons"),
+        "nameplateRoleMode", function(mode) callbacks.SetNameplateRoleMode(mode) end, "off",
+        tr("Kreuz: Heiler · Schild: Tank · Schwert: DD\nUnbekannte oder geschützte Rollen bleiben ausgeblendet, besonders bei Gegnern.",
+            "Cross: healer · shield: tank · sword: DPS\nUnknown or restricted roles stay hidden, especially for enemies."))
+
+    form:Card(tr("Namensfarben", "Name colors"))
+    form:Toggle({ key = "colorPlayerNames", label = tr("Nach Zugehörigkeit färben", "Color by affiliation"),
+        default = true, enabled = ready,
+        get = function() local current = settings(); return current and current.colorPlayerNames == true or false end,
+        set = function(value)
+            U.CancelColorPicker()
+            callbacks.SetColorPlayerNames(value)
+        end })
     local categories = {
         { "enemy", "Gegner", "Enemies" },
         { "friendly", "Freundliche Spieler", "Friendly players" },
         { "group", "Gruppe / Raid", "Party / raid" },
     }
-    for i, spec in ipairs(categories) do
-        local category = spec[1]
-        local rowLabel = T.Text(palette, tr(spec[2], spec[3]))
-        rowLabel:SetPoint("TOPLEFT", 18, -94 - (i - 1) * 36)
-        local button = T.Button(palette, "", 154, 28, function() chooseColor(view, category) end)
-        button:SetPoint("TOPRIGHT", -18, -88 - (i - 1) * 36)
-        local swatch = button:CreateTexture(nil, "OVERLAY")
-        swatch:SetSize(18, 18); swatch:SetPoint("LEFT", 12, 0)
-        button.swatch = swatch
-        view.colorButtons[category] = button
-    end
-    local defaults = T.Button(palette, tr("Default-Farben", "Default colors"), 154, 28, function()
-        U.CancelColorPicker()
-        callbacks.ResetNameColors()
-    end)
-    defaults:SetPoint("TOPRIGHT", -18, -212)
-    view.defaultColors = defaults
-    view.extraViews={}
-    if NS.Readability then view.extraViews.readability=NS.Readability.CreateSettings(view,frame) end
-    if NS.ConflictMonitor then view.extraViews.compatibility=NS.ConflictMonitor.CreateSettings(view,frame) end
-    if NS.Readability then
-        local more=T.Button(frame,tr("Weitere Optionen","More options"),140,25,function() end)
-        -- Embedded there is no heading row above the tabs, so it sits to their left.
-        more:SetPoint("TOPRIGHT",embedded and -378 or -22,embedded and tabTop or -18);T.StyleDropdown(more)
-        local popup=CreateFrame("Frame",nil,more,BackdropTemplateMixin and "BackdropTemplate" or nil)
-        popup:SetPoint("TOPRIGHT",more,"BOTTOMRIGHT",0,-2);popup:SetSize(180,NS.ConflictMonitor and 64 or 36)
-        popup:SetFrameStrata("FULLSCREEN_DIALOG");popup:SetFrameLevel(more:GetFrameLevel()+20)
-        popup:SetClampedToScreen(true);T.Panel(popup,"surface")
-        local row=T.Button(popup,tr("Lesbarkeit","Readability"),172,28,function() closeMenu();view:SelectTab("readability") end)
-        row:SetPoint("TOPLEFT",4,-4);popup:Hide()
-        if NS.ConflictMonitor then
-            local compatibility=T.Button(popup,tr("Kompatibilität","Compatibility"),172,28,function() closeMenu();view:SelectTab("compatibility") end)
-            compatibility:SetPoint("TOPLEFT",4,-32)
+    for _, entry in ipairs(categories) do
+        local category = entry[1]
+        local function color()
+            local current = settings()
+            return current and current.nameColors[category] or { 1, 1, 1 }
         end
-        more:SetScript("OnClick",function()
-            if popup:IsShown() then closeMenu() else closeMenu();popup:Show();openMenu=popup end
+        -- Palette can be configured while name coloring is disabled.
+        local row = form:Color({ key = "nameColors." .. category, label = tr(entry[2], entry[3]),
+            default = NS.FrameSettings and NS.FrameSettings.DefaultNameColors[category], enabled = ready,
+            tip = function() return hexOf(color()) end,
+            get = color,
+            set = function(rgb) writeColor(view, form, category, rgb) end })
+        -- A pick of the previous colour is put back first; without the client's picker there is a message.
+        local open = row.control:GetScript("OnClick")
+        row.control:SetScript("OnClick", function(...)
+            U.CancelColorPicker()
+            if not settings() then return end
+            if not ColorPickerFrame and C_AddOns and type(C_AddOns.LoadAddOn) == "function" then
+                pcall(C_AddOns.LoadAddOn, "Blizzard_ColorPickerFrame")
+            end
+            local picker = ColorPickerFrame
+            if not picker or type(picker.GetColorRGB) ~= "function" then
+                if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffffd100ZenialClassFrames:|r " ..
+                    tr("Der WoW-Farbwähler ist nicht verfügbar.", "The WoW color picker is unavailable.")) end
+                return
+            end
+            open(...)
         end)
-        view.moreOptions,view.moreMenu=more,popup
     end
-    if NS.Portraits then
-        local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-        scroll:SetPoint("TOPLEFT", 22, -view.contentTop)
-        scroll:SetPoint("BOTTOMRIGHT", -42, embedded and 12 or 50)
-        local content = CreateFrame("Frame", nil, scroll)
-        content:SetSize(416, NS.Stuns and 600 or 340); scroll:SetScrollChild(content)
-        scroll:EnableMouseWheel(true)
-        scroll:SetScript("OnMouseWheel", function(self, delta)
-            self:SetVerticalScroll(math.max(0, math.min(self:GetVerticalScrollRange(), self:GetVerticalScroll() - delta * 35)))
-        end)
-        local title = T.Text(content, tr("Portraits", "Portraits"), "GameFontNormal", "gold")
-        title:SetPoint("TOPLEFT", 8, -8)
-        local hint = T.Text(content, tr("Standard: Blizzard unverändert. Klassenicon: nur Spieler mit bekannter Klasse. Im Kampf werden Änderungen verschoben.",
-            "Default: unchanged Blizzard portraits. Class icon: players with a known class only. Changes are deferred in combat."), "GameFontHighlightSmall", "muted")
-        hint:SetPoint("TOPLEFT", 8, -36); hint:SetWidth(390); hint:SetHeight(54)
-        view.portraitHint = hint
-        view.portraitControls = {}
-        for i, spec in ipairs({{"all", "Alle Frames", "All frames"}, {"player", "Spieler", "Player"},
-            {"target", "Ziel", "Target"}, {"party", "Gruppe", "Party"}}) do
-            local scope = spec[1]
-            local label = T.Text(content, tr(spec[2], spec[3]))
-            label:SetPoint("TOPLEFT", 8, -102 - (i - 1) * 54)
-            label:SetWidth(126)
-            local button = T.Button(content, "", 244, 28, function() end)
-            button:SetPoint("TOPLEFT", 140, -96 - (i - 1) * 54); T.StyleDropdown(button)
-            local popup = CreateFrame("Frame", nil, button, BackdropTemplateMixin and "BackdropTemplate" or nil)
-            popup:SetSize(244, 64); popup:SetPoint("TOPLEFT", button, "BOTTOMLEFT", 0, -2)
-            popup:SetClampedToScreen(true); popup:SetFrameStrata("FULLSCREEN_DIALOG")
-            popup:SetFrameLevel(button:GetFrameLevel() + 20); T.Panel(popup, "surface")
-            function button:Select(mode)
-                if not self:IsEnabled() or not NS.Portraits.ValidMode(mode) then return end
-                closeMenu()
+    local buttons = form:Buttons({ { text = tr("Default-Farben", "Default colors"), enabled = ready,
+        onClick = function()
+            U.CancelColorPicker()
+            callbacks.ResetNameColors()
+            U.Refresh()
+        end } })
+    view.defaultColors = buttons.entries[1].button
+end
+
+-- Portraits page ----------------------------------------------------------------------------------------------
+local portraitScopes = {
+    { "all", "Alle Frames", "All frames" }, { "player", "Spieler", "Player" },
+    { "target", "Ziel", "Target" }, { "party", "Gruppe", "Party" },
+}
+
+-- Mode of a scope; "All frames" has none while the three frames differ.
+local function portraitMode(scope)
+    local current = settings()
+    local portrait = current and current.portrait
+    if not portrait then return nil end
+    if scope == "all" then
+        return portrait.player == portrait.target and portrait.target == portrait.party and portrait.player or nil
+    end
+    return portrait[scope]
+end
+
+local function buildPortraits(page, view)
+    local form = U.NewForm(page, view)
+    form:Card(tr("Portraits", "Portraits"),
+        tr("Standard: Blizzard unverändert. Klassenicon: nur Spieler mit bekannter Klasse. Im Kampf werden Änderungen verschoben.",
+            "Default: unchanged Blizzard portraits. Class icon: players with a known class only. Changes are deferred in combat."))
+    for _, entry in ipairs(portraitScopes) do
+        local scope = entry[1]
+        form:Select({ key = "portrait." .. scope, label = tr(entry[2], entry[3]), default = "default", enabled = ready,
+            options = function()
+                local list = { { "default", U.PortraitModeLabel("default") }, { "class", U.PortraitModeLabel("class") } }
+                if not ready() then list[#list + 1] = loading
+                elseif not portraitMode(scope) then list[#list + 1] = { "mixed", tr("Individuell", "Individual") } end
+                return list
+            end,
+            get = function()
+                if not ready() then return loading[1] end
+                return portraitMode(scope) or "mixed"
+            end,
+            set = function(mode)
+                if not NS.Portraits.ValidMode(mode) then return end
                 if NS.Portraits.SetMode(scope, mode) then U.Refresh() end
-            end
-            button.rows = {}
-            for j, mode in ipairs({"default", "class"}) do
-                local value = mode
-                local row = T.Button(popup, U.PortraitModeLabel(value), 236, 28, function() button:Select(value) end)
-                row:SetPoint("TOPLEFT", 4, -4 - (j - 1) * 28); button.rows[j] = row
-            end
-            popup:Hide()
-            button.menu = popup
-            button:SetScript("OnClick", function()
-                if popup:IsShown() then closeMenu() else closeMenu(); popup:Show(); openMenu = popup end
-            end)
-            view.portraitControls[scope] = button
-        end
-        if NS.Stuns then
-            local title=T.Text(content,tr("Aktive Stuns","Active stuns"),"GameFontNormal","gold")
-            title:SetPoint("TOPLEFT",8,-310)
-            local hint=T.Text(content,tr("Stun-Symbol mit Ablaufanzeige über dem Portrait; unabhängig von Standard oder Klassenicon.",
-                "Stun icon with countdown over the portrait, independently of Default or Class icon."),"GameFontHighlightSmall","muted")
-            hint:SetPoint("TOPLEFT",8,-338);hint:SetHeight(46)
-            view.stunHint=hint;view.stunControls={}
-            for i,spec in ipairs({{"all","Alle Frames","All frames"},{"player","Spieler","Player"},
-                {"target","Ziel","Target"},{"party","Gruppe","Party"}}) do
-                local scope=spec[1]
-                local check=CreateFrame("CheckButton",nil,content,"UICheckButtonTemplate")
-                check:SetSize(28,28);check:SetPoint("TOPLEFT",8,-388-(i-1)*34);T.StyleCheckbox(check)
-                local label=T.Text(content,tr(spec[2],spec[3]));label:SetPoint("LEFT",check,"RIGHT",6,0)
-                check:SetScript("OnClick",function(self) NS.Stuns.SetEnabled(scope,self:GetChecked()==true) end)
-                view.stunControls[scope]=check
-            end
-            local note=T.Text(content,tr("Standard: ausgeschaltet. Nur erkennbare Stuns von Spielern. Geschützte oder fehlende Daten bleiben nativ; neue Frames im Kampf warten bis Kampfende.",
-                "Default: disabled. Recognizable player stuns only. Protected or unavailable data leave portraits unchanged; new frames in combat wait until combat ends."),"GameFontHighlightSmall","muted")
-            note:SetPoint("TOPLEFT",8,-530);note:SetHeight(60);view.stunNote=note
-        end
-        view.portraitScroll, view.portraitContent = scroll, content
-        scroll:Hide()
+            end })
     end
-    if NS.BarTextSettings then
-        local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-        -- The manager uses the same two header rows as the standalone window.
-        scroll:SetPoint("TOPLEFT", 22, -view.contentTop)
-        scroll:SetPoint("BOTTOMRIGHT", -42, embedded and 12 or 50)
-        local content = CreateFrame("Frame", nil, scroll)
-        scroll:SetScrollChild(content)
-        scroll:EnableMouseWheel(true)
-        scroll:SetScript("OnMouseWheel", function(self, delta)
-            self:SetVerticalScroll(math.max(0, math.min(self:GetVerticalScrollRange(), self:GetVerticalScroll() - delta * 35)))
-        end)
-        local panel, closeBarMenu = NS.BarTextSettings.Create(view, content, closeMenu)
-        view.barTextScroll, view.barTextContent = scroll, content
-        local generalTab = T.Button(frame, NS.BarTextLocale.general, 100, 25, function() view:SelectTab("general") end)
-        local textTab = T.Button(frame, NS.BarTextLocale.tab, 124, 25, function() view:SelectTab("texts") end)
-        generalTab:SetPoint("TOPRIGHT", -266, tabTop)
-        textTab:SetPoint("TOPRIGHT", -134, tabTop)
-        if view.portraitScroll then
-            local portraitTab = T.Button(frame, tr("Portraits", "Portraits"), 104, 25, function() view:SelectTab("portraits") end)
-            portraitTab:SetPoint("TOPRIGHT", -22, tabTop)
-            view.portraitTab = portraitTab
-        end
-        function view:SelectTab(id)
-            closeMenu(); closeBarMenu(); U.CancelColorPicker(view)
-            for _,extra in pairs(self.extraViews) do if extra.Cancel then extra:Cancel() end end
-            self.tab = self.extraViews[id] and id or ((id == "portraits" and self.portraitScroll) and "portraits" or (id == "texts" and "texts" or "general"))
-            local texts = self.tab == "texts"
-            display:SetShown(self.tab == "general"); palette:SetShown(self.tab == "general")
-            scroll:SetShown(texts); panel:SetShown(texts)
-            if self.portraitScroll then self.portraitScroll:SetShown(self.tab == "portraits") end
-            for key,extra in pairs(self.extraViews) do extra.scroll:SetShown(self.tab==key) end
-            self:Layout(); self:Refresh()
-        end
-        view.tab = "general"
-        scroll:Hide()
+    if not NS.Stuns then return end
+    form:Card(tr("Aktive Stuns", "Active stuns"),
+        tr("Stun-Symbol mit Ablaufanzeige über dem Portrait; unabhängig von Standard oder Klassenicon.",
+            "Stun icon with countdown over the portrait, independently of Default or Class icon."))
+    for _, entry in ipairs(portraitScopes) do
+        local scope = entry[1]
+        form:Toggle({ key = "stuns." .. scope, label = tr(entry[2], entry[3]), default = false,
+            enabled = function() local current = settings(); return current ~= nil and current.stuns ~= nil end,
+            get = function()
+                local config = settings() and settings().stuns
+                return config and (scope == "all" and config.player and config.target and config.party or config[scope]) == true or false
+            end,
+            set = function(value) NS.Stuns.SetEnabled(scope, value) end })
     end
-    function view:Layout()
-        local width = frame:GetWidth()
-        local top = self.contentTop
-        local columns = width >= 740
-        local panelWidth = math.min(432, columns and (width - 64) / 2 or width - 44)
-        display:ClearAllPoints(); palette:ClearAllPoints()
-        display:SetPoint("TOPLEFT", 22, -top)
-        display:SetSize(panelWidth, 260)
-        palette:SetSize(panelWidth, 260)
-        if columns then
-            palette:SetPoint("TOPLEFT", 42 + panelWidth, -top)
-        else
-            palette:SetPoint("TOPLEFT", 22, -top - 276)
-        end
-        if self.LayoutBarText then
-            self.barTextContent:SetSize(math.max(300, width - 64), 650)
-            self:LayoutBarText()
-        end
-        if self.portraitContent then
-            local contentWidth = math.max(300, width - 64)
-            self.portraitContent:SetWidth(contentWidth)
-            self.portraitHint:SetWidth(contentWidth - 16)
-            if self.stunHint then self.stunHint:SetWidth(contentWidth-16);self.stunNote:SetWidth(contentWidth-16) end
-            for _, button in pairs(self.portraitControls) do
-                button:SetWidth(contentWidth - 148)
-                button.menu:SetWidth(contentWidth - 148)
-                for _, row in ipairs(button.rows) do row:SetWidth(contentWidth - 156) end
-            end
-        end
-        for _,extra in pairs(self.extraViews) do if extra.Layout then extra:Layout(width) end end
+    form:Note({ key = "stunNote", text = tr("Standard: ausgeschaltet. Nur erkennbare Stuns von Spielern. Geschützte oder fehlende Daten bleiben nativ; neue Frames im Kampf warten bis Kampfende.",
+        "Default: disabled. Recognizable player stuns only. Protected or unavailable data leave portraits unchanged; new frames in combat wait until combat ends.") })
+end
+
+-- Window ------------------------------------------------------------------------------------------------------
+local function version()
+    local read = C_AddOns and C_AddOns.GetAddOnMetadata or _G.GetAddOnMetadata
+    if type(read) ~= "function" then return nil end
+    local ok, value = pcall(read, addonName, "Version")
+    return ok and value or nil
+end
+
+-- Leaving a page or hiding the window ends a readability comparison that was not applied.
+local function cancelComparison(page)
+    return function()
+        local ui = page.view and page.view.readability
+        if ui and ui.Cancel then ui:Cancel() end
     end
-    function view:Refresh()
-        local settings = callbacks.GetSettings()
-        frameColors:SetEnabled(settings~=nil); frameColors:SetChecked(settings and settings.colorUnitFrames==true or false)
-        check:SetEnabled(settings ~= nil); control:SetEnabled(settings ~= nil)
-        check:SetChecked(settings and settings.showGroupLevel == true or false)
-        local threatEnabled = callbacks.GetThreatNumeric()
-        threat:SetEnabled(settings ~= nil and threatEnabled ~= nil)
-        threat:SetChecked(threatEnabled == true)
-        control:SetText(settings and U.ModeLabel(settings.nameplateMode) or tr("Wird geladen…", "Loading…"))
-        control.value = settings and settings.nameplateMode or nil
-        roles:SetEnabled(settings ~= nil)
-        roles:SetText(settings and U.ModeLabel(settings.nameplateRoleMode) or tr("Wird geladen…", "Loading…"))
-        roles.value = settings and settings.nameplateRoleMode or nil
-        names:SetEnabled(settings ~= nil); defaults:SetEnabled(settings ~= nil)
-        names:SetChecked(settings and settings.colorPlayerNames == true or false)
-        for category, button in pairs(view.colorButtons) do
-            -- Palette can be configured while name coloring is disabled.
-            button:SetEnabled(settings ~= nil)
-            local color = settings and settings.nameColors[category] or { 1, 1, 1 }
-            button.swatch:SetColorTexture(color[1], color[2], color[3], 1)
-            button:SetText(string.format("#%02X%02X%02X", math.floor(color[1] * 255 + .5),
-                math.floor(color[2] * 255 + .5), math.floor(color[3] * 255 + .5)))
-        end
-        if self.RefreshBarText then self:RefreshBarText() end
-        if self.portraitControls then
-            for scope, button in pairs(self.portraitControls) do
-                local mode = settings and settings.portrait and settings.portrait[scope]
-                if scope == "all" and settings and settings.portrait then
-                    local p = settings.portrait
-                    mode = p.player == p.target and p.target == p.party and p.player or nil
-                end
-                button.value = mode
-                button:SetEnabled(settings ~= nil)
-                button:SetText(mode and U.PortraitModeLabel(mode) or tr("Individuell", "Individual"))
-            end
-        end
-        if self.stunControls then
-            local config=settings and settings.stuns
-            for scope,check in pairs(self.stunControls) do
-                check:SetEnabled(config~=nil)
-                check:SetChecked(config and (scope=="all" and config.player and config.target and config.party or config[scope])==true or false)
-            end
-        end
-        for _,extra in pairs(self.extraViews) do if extra.Refresh then extra:Refresh() end end
-    end
-    frame:SetScript("OnSizeChanged", function() view:Layout() end)
-    frame:SetScript("OnShow", function() view:Layout(); view:Refresh() end)
-    frame:SetScript("OnHide", function()
-        closeMenu(); U.CancelColorPicker(view)
-        for _,extra in pairs(view.extraViews) do if extra.Cancel then extra:Cancel() end end
-    end)
+end
+
+local function spec()
+    local more = tr("Weitere Optionen", "More options")
+    local list = {
+        { key = "general", title = tr("Allgemein", "General"), icon = "settings",
+            subtitle = tr("Anzeige und Namensfarben", "Display and name colors"), build = buildGeneral },
+        { key = "texts", title = NS.BarTextLocale and NS.BarTextLocale.tab or tr("Balkentexte", "Bar texts"), icon = "note",
+            subtitle = tr("HP- und Ressourcentexte", "Health and resource texts"),
+            visible = function() return NS.BarTextSettings ~= nil end,
+            build = function(page, view) NS.BarTextSettings.BuildPage(page, view) end },
+        { key = "portraits", title = tr("Portraits", "Portraits"), icon = "characters",
+            subtitle = tr("Klassenicons und Stun-Anzeige", "Class icons and stun countdowns"),
+            visible = function() return NS.Portraits ~= nil and NS.BarTextSettings ~= nil end, build = buildPortraits },
+        { key = "readability", title = tr("Lesbarkeit", "Readability"), icon = "search", group = more,
+            subtitle = tr("Vorlagen für Schrift und Farben", "Presets for text and colors"),
+            visible = function() return NS.Readability ~= nil end,
+            build = function(page, view)
+                NS.Readability.BuildPage(page, view)
+                page.onHide = cancelComparison(page)
+            end },
+        { key = "compatibility", title = tr("Kompatibilität", "Compatibility"), icon = "check", group = more,
+            subtitle = tr("Prüft auf Überschneidungen", "Checks for overlaps"),
+            visible = function() return NS.Readability ~= nil and NS.ConflictMonitor ~= nil end,
+            build = function(page, view) NS.ConflictMonitor.BuildPage(page, view) end },
+    }
+    return { name = "ZenialClassFramesWindow", label = "ClassFrames", version = version, tr = translate, pages = list }
+end
+
+function U.Create(parent, embedded)
+    local view = Window.New(spec(), embedded and parent or nil)
     U.views[#U.views + 1] = view
-    view:Layout(); view:Refresh()
-    frame:Hide()
     return view
 end
 
 function U.Toggle()
     if not standalone then standalone = U.Create(nil, false) end
-    if standalone.frame:IsShown() then standalone.frame:Hide() else standalone.frame:Show() end
+    standalone:Toggle()
 end
 function U.OpenBarText()
     if not standalone then standalone = U.Create(nil, false) end
-    standalone:SelectTab("texts")
-    standalone.frame:Show()
+    standalone:Open("texts")
 end
 function U.HideAll()
-    closeMenu(); U.CancelColorPicker()
-    for _,view in ipairs(U.views) do if not view.embedded then view.frame:Hide() end end
+    U.CancelColorPicker()
+    for _, view in ipairs(U.views) do if not view.embedded then view.frame:Hide() end end
 end
 
 _G.ZenialAddonPanels = _G.ZenialAddonPanels or {}
