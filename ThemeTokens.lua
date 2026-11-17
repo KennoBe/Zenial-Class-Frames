@@ -32,7 +32,7 @@ local PALETTE = {
     -- primary action: gold fill with dark text
     primaryTop = "#f6cb5e", primaryBottom = "#d8a030", primaryEdge = "#ffe29a", primaryText = "#1b1405",
     -- text
-    text = "#eceef4", textSoft = "#c5cad6", dim = "#939aaa", muted = "#6d7484", disabledText = "#555b68",
+    text = "#eceef4", textSoft = "#c5cad6", dim = "#a8b0c2", muted = "#9da6bd", disabledText = "#7b8496",
     -- state
     online = "#3ee06a", danger = "#e5534b", dangerTop = "#2b1518", dangerBottom = "#211013", dangerEdge = "#93403b",
     dangerText = "#ff968c", warning = "#f5a524", success = "#3ee06a", disabled = "#171a20",
