@@ -6,6 +6,10 @@ local addonName, private = ...
 -- hidden (visible / advanced) and the rest moves up. Values come from spec.get / spec.set or from ctx.read /
 -- ctx.write; colours are palette keys of private.Theme, text sizes are its type roles. The module does not know
 -- the addon: texts go through ctx.tr, changes are reported through ctx.changed(key).
+--
+-- Value rows (Toggle, Slider, Select, Segment, Input) take an optional spec.button = { text, onClick, tip,
+-- variant, enabled, width }: one button right of the control on the same line. Rows of buttons wrap into
+-- lines. Form:Row(key) finds a row, Form:SetWidth(width) changes the width of a built page.
 if type(addonName) ~= "string" or type(private) ~= "table" then return end
 local T0 = private.Theme
 if type(T0) ~= "table" or type(T0.Tint) ~= "function" or type(T0.StyleCheckbox) ~= "function" then return end
@@ -25,6 +29,8 @@ local SWATCH_W, SWATCH_H = 40, 22
 local INPUT_W, INPUT_H = 260, 24
 local TEXTS_MIN, TEXTS_PAD = 60, 8   -- multi-line fields size themselves by their content
 local BUTTON_H, BUTTON_GAP, BUTTON_MIN = 26, 8, 120
+local BUTTON_LINE = 6                   -- between two lines of buttons
+local ROW_BUTTON_MIN = 80               -- minimum width of the button inside a value row
 local POPUP_ROW, POPUP_MAX = 22, 10
 local FLASH_TIME = 1.2
 
@@ -198,6 +204,11 @@ local function applyState(self, row)
     if row.desc then tint(row.desc, "SetTextColor", on and "dim" or "disabledText") end
     setEnabled(row.control, on)
     if row.buttons then for _, button in ipairs(row.buttons) do setEnabled(button, on) end end
+    -- The button of the row follows the row, unless its own `enabled` decides.
+    if row.button then
+        local own = row.spec.button.enabled
+        if own then setEnabled(row.button, own() == true) else setEnabled(row.button, on) end
+    end
     if row.repaint then row.repaint() end
 end
 
@@ -205,7 +216,7 @@ end
 function Form:ApplyStates()
     for _, card in ipairs(self.cards) do
         for _, row in ipairs(card.rows) do
-            if row.valueRow and (row.spec.parent ~= nil or row.spec.enabled) then applyState(self, row) end
+            if row.valueRow and (row.spec.parent ~= nil or row.spec.enabled or (row.button and row.spec.button.enabled)) then applyState(self, row) end
         end
     end
 end
@@ -362,11 +373,13 @@ local function layoutCardHead(self, card)
     local T = theme()
     local top = CARD_PAD
     if card.titleText then
+        card.titleText:SetWidth(self.inner)
         card.titleText:SetText(upper(resolve(self, card.title)))
         top = top + T.type.overline.size + 2
     end
     if card.descText then
         local gap = card.titleText and DESC_GAP or 0
+        card.descText:SetWidth(self.inner)
         card.descText:SetText(resolve(self, card.desc))
         card.descText:ClearAllPoints()
         card.descText:SetPoint("TOPLEFT", card.frame, "TOPLEFT", CARD_PAD, -(top + gap))
@@ -382,25 +395,69 @@ local function addRow(self, kind, spec, frameType)
     local valueRow = VALUE_ROWS[kind] == true
     local indent = (valueRow and spec.parent ~= nil) and INDENT or 0
     local frame = CreateFrame(frameType or "Frame", nil, card.frame)
-    local row = { kind = kind, spec = spec, frame = frame, card = card, valueRow = valueRow, indent = indent, inner = self.inner - indent }
+    local row = { kind = kind, spec = spec, frame = frame, card = card, valueRow = valueRow, indent = indent, inner = self.inner - indent, shift = 0, span = 0, labelX = 0 }
     frame:SetWidth(row.inner)
     card.rows[#card.rows + 1] = row
     return row
 end
 
--- label (left) and optional description below it
+-- label (left) and optional description below it. Both wrap; their width is set on every refresh (fitRow),
+-- their height is measured (labelsBottom), so a row grows with its texts.
 local function addLabels(self, row, labelX, labelWidth)
     local frame = row.frame
-    row.label = newText(frame, "body", "text", labelWidth, 16, false)
+    row.labelX = labelX
+    row.label = newText(frame, "body", "text", labelWidth, nil, true)
     row.label:SetPoint("TOPLEFT", frame, "TOPLEFT", labelX, -10)
-    row.desc = newText(frame, "caption", "dim", labelWidth, 24, true)
+    row.desc = newText(frame, "caption", "dim", labelWidth, nil, true)
     row.desc:SetPoint("TOPLEFT", frame, "TOPLEFT", labelX, -27)
-    if row.desc.SetMaxLines then row.desc:SetMaxLines(2) end
     row.desc:Hide()
+end
+
+-- Optional button of a value row (spec.button): right of the control, same line.
+local function addRowButton(self, row)
+    local spec = row.spec.button
+    if type(spec) ~= "table" then return end
+    local variant = (spec.variant == "primary" or spec.variant == "danger") and spec.variant or "secondary"
+    local button = theme().Button(row.frame, "", ROW_BUTTON_MIN, BUTTON_H, function(widget)
+        if spec.onClick then spec.onClick(widget) end
+    end, variant)
+    button:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", 0, -4)
+    if spec.tip ~= nil then
+        Form.Tooltip(button, function() return resolve(self, spec.text) end, function() return resolve(self, spec.tip) end)
+    end
+    row.button = button
+end
+
+-- Sets the width of the button and moves the control and the label to make room for it. The control keeps its
+-- width; the label takes everything that is left of it (less GAP).
+local function fitRow(self, row)
+    local button = row.button
+    row.shift = 0
+    if button then
+        local spec = row.spec.button
+        local text = resolve(self, spec.text)
+        local width = spec.width
+        if not width then
+            self.measure:SetText(text)
+            width = math.max(ROW_BUTTON_MIN, math.ceil((self.measure:GetStringWidth() or 0) + 28))
+        end
+        button:SetText(text); button:SetWidth(width)
+        row.buttonWidth = width
+        row.shift = width + BUTTON_GAP
+    end
+    if row.place then row.place() end
+    if row.label then
+        local reserve = 0
+        if row.span > 0 then reserve = row.span + GAP + row.shift
+        elseif button then reserve = row.buttonWidth + GAP end
+        local width = math.max(40, row.inner - row.labelX - reserve)
+        row.label:SetWidth(width); row.desc:SetWidth(width)
+    end
 end
 
 local function refreshLabels(self, row)
     local spec = row.spec
+    fitRow(self, row)
     if row.label then row.label:SetText(resolve(self, spec.label)) end
     local description = spec.desc ~= nil and resolve(self, spec.desc) or ""
     row.hasDesc = description ~= ""
@@ -410,7 +467,20 @@ local function refreshLabels(self, row)
     end
 end
 
-local function plainHeight(row) return row.hasDesc and ROW_DESC or ROW end
+-- Bottom edge of label and description as they are measured now; places the description below the label.
+local function labelsBottom(row)
+    local bottom = 10 + math.max(16, math.ceil(tonumber(row.label:GetStringHeight()) or 16))
+    if row.hasDesc then
+        row.desc:ClearAllPoints()
+        row.desc:SetPoint("TOPLEFT", row.frame, "TOPLEFT", row.labelX, -(bottom + 1))
+        bottom = bottom + 1 + math.max(12, math.ceil(tonumber(row.desc:GetStringHeight()) or 12))
+    end
+    return bottom
+end
+
+local function plainHeight(row)
+    return math.max(row.hasDesc and ROW_DESC or ROW, labelsBottom(row) + (row.hasDesc and 6 or 8))
+end
 
 -- Toggle -------------------------------------------------------------------------------------
 function Form:Toggle(spec)
@@ -430,6 +500,7 @@ function Form:Toggle(spec)
         self:Commit(row, value)
     end)
     row.control = check
+    addRowButton(self, row)
     attachTip(self, row, row.frame)
     row.update = function()
         refreshLabels(self, row)
@@ -445,9 +516,9 @@ function Form:Slider(spec)
     local row = addRow(self, "Slider", spec)
     local valueWidth = (spec.labels or spec.suffix) and VALUE_W_WIDE or VALUE_W
     addLabels(self, row, 0, row.inner - SLIDER_W - valueWidth - 8 - GAP)
+    row.span = SLIDER_W + valueWidth + 8
     local slider = CreateFrame("Slider", nil, row.frame)
     slider:SetSize(SLIDER_W, SLIDER_H)
-    slider:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -(valueWidth + 8), -9)
     slider:SetOrientation("HORIZONTAL")
     -- Without a template a slider is not mouse-active; the wheel belongs to the scrolling page.
     slider:EnableMouse(true)
@@ -464,8 +535,13 @@ function Form:Slider(spec)
     slider:SetThumbTexture(thumb)
     local valueText = newText(row.frame, "body", "goldText", valueWidth, 16, false)
     valueText:SetJustifyH("RIGHT")
-    valueText:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", 0, -10)
     row.control, row.fill, row.thumb, row.valueText = slider, fill, thumb, valueText
+    row.place = function()
+        slider:ClearAllPoints(); slider:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -(valueWidth + 8 + row.shift), -9)
+        valueText:ClearAllPoints(); valueText:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -row.shift, -10)
+    end
+    row.place()
+    addRowButton(self, row)
     row.repaint = function()
         tint(valueText, "SetTextColor", row.locked and "disabledText" or "goldText")
         tint(thumb, "SetColorTexture", row.locked and "disabledText" or "gold")
@@ -630,6 +706,7 @@ function Form:Select(spec)
     local T = theme()
     local row = addRow(self, "Select", spec)
     addLabels(self, row, 0, row.inner - SELECT_W - GAP)
+    row.span = SELECT_W
     local button = T.Button(row.frame, "", SELECT_W, SELECT_H, function(_, mouse)
         if mouse == "RightButton" then
             self:ClosePopups()
@@ -642,8 +719,10 @@ function Form:Select(spec)
     T.StyleDropdown(button)
     T.AlignButtonText(button, 10, 28)
     if button.RegisterForClicks then button:RegisterForClicks("LeftButtonUp", "RightButtonUp") end
-    button:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", 0, -4)
     row.control = button
+    row.place = function() button:ClearAllPoints(); button:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -row.shift, -4) end
+    row.place()
+    addRowButton(self, row)
     attachTip(self, row, row.frame)
     attachTip(self, row, button)
     row.update = function()
@@ -674,12 +753,17 @@ function Form:Segment(spec)
     local row = addRow(self, "Segment", spec)
     local full = spec.full == true
     local total = full and row.inner or SEGMENT_W
-    if not full then addLabels(self, row, 0, row.inner - SEGMENT_W - GAP) end
+    if not full then addLabels(self, row, 0, row.inner - SEGMENT_W - GAP); row.span = SEGMENT_W end
     local container = CreateFrame("Frame", nil, row.frame)
     container:SetSize(total, SEGMENT_H)
-    if full then container:SetPoint("TOPLEFT", row.frame, "TOPLEFT", 0, -4)
-    else container:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", 0, -4) end
     row.control, row.buttons = container, {}
+    row.place = function()
+        container:ClearAllPoints()
+        if full then container:SetPoint("TOPLEFT", row.frame, "TOPLEFT", 0, -4)
+        else container:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -row.shift, -4) end
+    end
+    row.place()
+    if not full then addRowButton(self, row) end
     row.repaint = function()
         for _, button in ipairs(row.buttons) do
             if button:IsShown() then paintSegment(button, button.selected, button.hover, row.locked) end
@@ -708,6 +792,7 @@ function Form:Segment(spec)
     end
     row.update = function()
         refreshLabels(self, row)
+        if full then total = row.inner; container:SetWidth(total) end
         local options, value = optionList(row), self:Read(row)
         local count = math.min(5, #options)
         build(count)
@@ -727,7 +812,7 @@ function Form:Segment(spec)
             end
         end
     end
-    row.height = function() return (not full and row.hasDesc) and ROW_DESC or ROW end
+    row.height = function() return full and ROW or plainHeight(row) end
     return row
 end
 
@@ -829,12 +914,15 @@ function Form:Texts(spec)
     local edit = newEdit(row, true, row.inner, TEXTS_MIN)
     if spec.maxChars and edit.SetMaxLetters then edit:SetMaxLetters(spec.maxChars * (spec.maxLines or 1) + (spec.maxLines or 1)) end
     row.control = edit
-    local function offset() return row.hasDesc and 52 or 30 end
+    local function offset() return math.max(row.hasDesc and 52 or 30, labelsBottom(row) + 4) end
     local function fieldHeight()
         local height = edit.GetHeight and edit:GetHeight()
         return math.max(TEXTS_MIN, type(height) == "number" and height or 0)
     end
-    row.layoutEdit = function() edit:ClearAllPoints(); edit:SetPoint("TOPLEFT", row.frame, "TOPLEFT", 0, -offset()) end
+    row.layoutEdit = function()
+        edit:SetWidth(row.inner)
+        edit:ClearAllPoints(); edit:SetPoint("TOPLEFT", row.frame, "TOPLEFT", 0, -offset())
+    end
     -- The client changes the field height while the user types: stack the page again, never touching the text.
     local function reflow()
         if self.refreshing then return end
@@ -869,10 +957,13 @@ function Form:Input(spec)
     local row = addRow(self, "Input", spec)
     local width = spec.width or INPUT_W
     addLabels(self, row, 0, row.inner - width - GAP)
+    row.span = width
     local edit = newEdit(row, false, width, INPUT_H)
-    edit:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", 0, -5)
     if spec.maxLetters and edit.SetMaxLetters then edit:SetMaxLetters(spec.maxLetters) end
     row.control = edit
+    row.place = function() edit:ClearAllPoints(); edit:SetPoint("TOPRIGHT", row.frame, "TOPRIGHT", -row.shift, -5) end
+    row.place()
+    addRowButton(self, row)
     local function commit(box)
         if self.refreshing then return end
         local key = row.heldKey
@@ -920,8 +1011,10 @@ function Form:Buttons(list)
         end
         return false
     end
+    -- The buttons stand side by side; one that does not fit the width starts a new line.
+    row.lines = 1
     row.update = function()
-        local x = 0
+        local x, line = 0, 0
         for _, item in ipairs(row.entries) do
             local entry, button = item.spec, item.button
             if entry.visible and not entry.visible() then
@@ -933,15 +1026,17 @@ function Form:Buttons(list)
                     self.measure:SetText(text)
                     width = math.max(BUTTON_MIN, math.ceil((self.measure:GetStringWidth() or 0) + 28))
                 end
+                if x > 0 and x + width > row.inner then x = 0; line = line + 1 end
                 button:SetText(text); button:SetWidth(width)
-                button:ClearAllPoints(); button:SetPoint("TOPLEFT", row.frame, "TOPLEFT", x, -4)
+                button:ClearAllPoints(); button:SetPoint("TOPLEFT", row.frame, "TOPLEFT", x, -(4 + line * (BUTTON_H + BUTTON_LINE)))
                 button:SetEnabled(not entry.enabled or entry.enabled() == true)
                 button:Show()
                 x = x + width + BUTTON_GAP
             end
         end
+        row.lines = line + 1
     end
-    row.height = function() return ROW end
+    row.height = function() return 8 + row.lines * BUTTON_H + (row.lines - 1) * BUTTON_LINE end
     return row
 end
 
@@ -953,6 +1048,7 @@ function Form:Note(spec)
     row.text:SetPoint("TOPLEFT", row.frame, "TOPLEFT", 0, -6)
     row.content = function() return resolve(self, spec.text) end
     row.update = function()
+        row.text:SetWidth(row.inner)
         row.text:SetText(row.content())
     end
     row.height = function()
@@ -1041,6 +1137,30 @@ function Form:Refresh()
 end
 
 function Form:Height() return self.height end
+
+-- Takes a new width (cards, rows and texts follow) and lays the page out again. false when nothing changed.
+function Form:SetWidth(width)
+    if type(width) ~= "number" or width ~= width or width < 2 * CARD_PAD + 40 or width == self.width then return false end
+    self.width, self.inner = width, width - 2 * CARD_PAD
+    for _, card in ipairs(self.cards) do
+        for _, row in ipairs(card.rows) do row.inner = self.inner - row.indent end
+    end
+    self:Refresh()
+    return true
+end
+
+-- The row of a key (spec.key; for a function key its current value) or of spec.anchor; nil when there is none.
+-- The row has .control, .button (when it has one) and .spec.
+function Form:Row(key)
+    if key == nil then return nil end
+    for _, card in ipairs(self.cards) do
+        for _, row in ipairs(card.rows) do
+            local spec = row.spec
+            if spec.anchor == key or (spec.key ~= nil and keyOf(spec) == key) then return row end
+        end
+    end
+    return nil
+end
 
 -- ---------------------------------------------------------------------------------------------
 -- Anchors (jump targets)

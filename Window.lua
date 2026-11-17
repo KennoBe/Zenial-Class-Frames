@@ -7,9 +7,14 @@
 -- of the sidebar, no frame, no close button, no Escape) for hosts such as the Community addon manager.
 --
 --   Window.New(spec[, parent]) -> view      own window without parent, embedded view with parent
---   Window.ScrollArea(parent)  -> scroll, content
+--   Window.ScrollArea(parent[, width]) -> scroll, content
 --   Window.CloseButton(frame[, onClick[, options]])
 --   Window.metrics
+--
+-- A form fills its page: view.formWidth is the page width less Window.metrics.formGap (own window: the fixed
+-- Window.metrics.formWidth; embedded: the page width when the page is built; a later, narrower host shrinks the
+-- form of a built page through Form:SetWidth, a wider host leaves it left aligned). view:ScrollTo(offset) rolls
+-- the current page, view:Jump(page, anchor) selects a page and rolls and flashes the row of a form anchor.
 --
 -- Everything the addon passes in `spec` goes through spec.tr (default: unchanged). The window's own texts
 -- (ZENIAL, Close, OK, Cancel, the resize hint) follow the client language and do not pass through spec.tr. Colours are palette keys, text sizes are T.type roles, distances are T.space.
@@ -41,12 +46,13 @@ end
 -- Measures: the one place. Everything else is derived from T.metrics.
 -- ---------------------------------------------------------------------------------------------
 local WM = {
-    pageWidth = 690, formWidth = 640, height = 640, minHeight = 420, embeddedMinWidth = 856,
+    pageWidth = 690, formGap = SP.lg, height = 640, minHeight = 420, embeddedMinWidth = 856,
     sidebar = TM.sidebar, brand = TM.brand, topbar = TM.topbar, footer = TM.footer,
     pageTop = TM.pageTop, pageBottom = TM.pageBottom, contentGap = TM.contentGap,
     navEntry = TM.navEntry, navGap = TM.navGap, navGroupGap = TM.navGroupGap, navWidth = TM.navWidth,
     tabHeight = 30, railWidth = 14, headerWidth = 260, footerHeight = 44, dialogWidth = 440, screenMargin = 40,
 }
+WM.formWidth = WM.pageWidth - WM.formGap     -- form of the own window; embedded views derive it from their page width
 WM.width = WM.sidebar + WM.contentGap + WM.pageWidth + WM.contentGap
 WM.widthSingle = WM.contentGap + WM.pageWidth + WM.contentGap
 Window.metrics = WM
@@ -84,14 +90,20 @@ end
 -- Scroll area: viewport, content frame and a rail beside the viewport with arrows, thumb and mouse wheel.
 -- The rail sits 2 px right of the viewport and is 14 px wide, so it fits the 16 px gutter of a page area.
 -- ---------------------------------------------------------------------------------------------
-local function styleScroll(scroll, step)
+local function styleScroll(scroll, step, inside)
     T.StyleScroll(scroll)
     -- StyleScroll brings its own inner slider; the rail is the only bar here.
     if scroll.zenialScrollBar then scroll.zenialScrollBar:Hide(); scroll.zenialScrollBar = nil end
     local rail = backdropFrame("Frame", nil, scroll:GetParent())
     rail:SetWidth(WM.railWidth)
-    rail:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 2, 0)
-    rail:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 2, 0)
+    if inside then
+        -- Inside the frame of the scroll area: the strip right of the content belongs to the area.
+        rail:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", 0, 0)
+        rail:SetPoint("BOTTOMRIGHT", scroll, "BOTTOMRIGHT", 0, 0)
+    else
+        rail:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 2, 0)
+        rail:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 2, 0)
+    end
     rail:SetFrameLevel(scroll:GetFrameLevel() + 3)
     T.Panel(rail, "inset")
     local bar = CreateFrame("Slider", nil, rail)
@@ -144,13 +156,24 @@ local function styleScroll(scroll, step)
     refresh()
 end
 
--- Returns the scroll frame (anchor it yourself) and its content frame (set its width and height).
-function Window.ScrollArea(parent)
+-- Returns the scroll frame (anchor it yourself) and its content frame (set its height). Without `width` the
+-- content is as wide as a page and the rail sits beside the scroll frame, in the gutter of the page area. With
+-- `width` the content has that width and the rail sits inside the frame of the scroll area, in the strip right
+-- of the content: the frame is `width` plus the rail wide (anchor its top and bottom on the left only), so the
+-- rail never leaves the area the caller gives it. scroll:SetContentWidth(width) changes the width later.
+function Window.ScrollArea(parent, width)
     local scroll = CreateFrame("ScrollFrame", nil, parent)
     local content = backdropFrame("Frame", nil, scroll)
-    content:SetSize(WM.pageWidth, 1)
+    local inside = finite(width) and width > 0
+    content:SetSize(inside and width or WM.pageWidth, 1)
     scroll:SetScrollChild(content)
-    styleScroll(scroll, 40)
+    function scroll:SetContentWidth(value)
+        if not (finite(value) and value > 0) then return end
+        content:SetWidth(value)
+        if inside then scroll:SetWidth(value + WM.railWidth + 2) end
+    end
+    if inside then scroll:SetContentWidth(width) end
+    styleScroll(scroll, 40, inside)
     return scroll, content
 end
 
@@ -509,10 +532,12 @@ function Window.New(spec, parent)
             areaWidth = math.max(WM.embeddedMinWidth, width)
             areaTop = (multi and WM.tabHeight or 0) + SP.sm
             self.pageWidth = areaWidth - WM.contentGap
+            self.formWidth = self.pageWidth - WM.formGap
         else
             areaWidth = WM.pageWidth
             areaTop = WM.pageTop
             self.pageWidth = WM.pageWidth
+            self.formWidth = WM.formWidth
         end
         local areaHeight = math.max(1, height - areaTop - WM.pageBottom - extra)
         area:ClearAllPoints()
@@ -527,6 +552,12 @@ function Window.New(spec, parent)
         view.status:SetWidth(math.max(100, areaWidth - 110))
         for _, page in pairs(pages) do
             if page.content then page.content:SetWidth(self.pageWidth) end
+            -- A narrower host takes the form of a built page in; a wider one leaves it left aligned.
+            local form = page.form
+            if type(form) == "table" and type(form.SetWidth) == "function" and finite(form.width) and form.width > self.formWidth + .5 then
+                local ok, changed = call(form, "SetWidth", self.formWidth)
+                if ok and changed and page.key == current and type(page.refresh) == "function" then page.refresh() end
+            end
         end
         if embedded then layoutTabs(width) else layoutSidebar() end
         markSelection()
@@ -644,6 +675,36 @@ function Window.New(spec, parent)
             page.region:Show()
             if frame:IsVisible() then refreshPage() end
         end
+    end
+
+    -- Rolls the current page (a rolling page) to `offset` from its top, kept inside the range.
+    function view:ScrollTo(offset)
+        local page = current and pages[current]
+        local scroll = page and page.scroll
+        if not scroll or not finite(offset) then return false end
+        call(scroll, "UpdateScrollChildRect")
+        local range = math.max(0, tonumber(scroll:GetVerticalScrollRange()) or 0)
+        scroll:SetVerticalScroll(math.max(0, math.min(range, offset)))
+        return true
+    end
+
+    -- Selects the page, builds it if needed, rolls to the row or card with this anchor of page.form and flashes it.
+    -- false when the page is not available or the form has no such anchor.
+    function view:Jump(key, anchor)
+        if not isVisible(key) then return false end
+        view:SelectPage(key)
+        local page = pages[key]
+        local form = page and page.form
+        if type(form) ~= "table" or type(form.AnchorOffset) ~= "function" then return false end
+        local offset = form:AnchorOffset(anchor)
+        if offset == nil and type(page.refresh) == "function" then
+            page.refresh()
+            offset = form:AnchorOffset(anchor)
+        end
+        if offset == nil then return false end
+        view:ScrollTo(offset)
+        if type(form.Flash) == "function" then form:Flash(anchor) end
+        return true
     end
 
     function view:Refresh()
