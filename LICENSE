@@ -1,19 +1,25 @@
-MIT License
+Copyright (c) 2026 ZENIAL. All rights reserved.
 
-Copyright (c) 2026 ZENIAL contributors
+This software, including its source code, documentation and the graphics and
+sounds created for it, is protected by copyright and owned by ZENIAL.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software
-and associated documentation files (the "Software"), to deal in the Software without
-restriction, including without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
-Software is furnished to do so, subject to the following conditions:
+You may download this software from an official ZENIAL source (for example
+CurseForge, the ZENIAL website or the official ZENIAL GitHub repository) and
+install and use it for personal, non-commercial purposes.
 
-The above copyright notice and this permission notice shall be included in all copies or
-substantial portions of the Software.
+Without prior written permission from ZENIAL you may not:
+- redistribute, re-upload or mirror this software or any part of it;
+- publish modified versions or works derived from it;
+- copy code or assets from this software into other projects;
+- sell this software or use it commercially.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
-INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
-PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
-FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
+Viewing the source code, or forking it on GitHub as far as the GitHub Terms of
+Service require, does not grant any further rights.
+
+Third-party material included in this software is not covered by this license
+and remains under its own license; see NOTICE.txt or the bundled license files
+where present.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL ZENIAL BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.

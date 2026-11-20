@@ -6,7 +6,7 @@
 ## Version: 1.10.0
 ## SavedVariables: ZenialClassFramesDB, ZenialMinimapDB
 ## IconTexture: Interface\AddOns\ZenialClassFrames\Media\Icon.tga
-## X-License: MIT
+## X-License: All Rights Reserved
 
 Theme.lua
 ThemeTokens.lua
