@@ -93,7 +93,7 @@ launcher.OpenSettings, launcher.OpenWizard = openSettings, openWizard
 --   minimapStatus = function() end,-- extra tooltip line, or nil
 --   minimapIcon = "path",          -- when Media\Icon.tga is not the ZENIAL mark
 ----------------------------------------------------------------------
-local HUB_VERSION = 1
+local HUB_VERSION = 2 -- 2: icons on the edge of a square minimap
 local hub = _G.ZenialMinimapHub
 if type(hub) ~= "table" then
     hub = {entries = {}}
@@ -101,6 +101,7 @@ if type(hub) ~= "table" then
 end
 if (tonumber(hub.version) or 0) < HUB_VERSION then
     hub.version = HUB_VERSION
+    hub.buttons = hub.buttons or {}
 
     function hub.DB()
         if type(_G.ZenialMinimapDB) ~= "table" then _G.ZenialMinimapDB = {} end
@@ -198,6 +199,27 @@ if (tonumber(hub.version) or 0) < HUB_VERSION then
         return radius, true
     end
 
+    -- A square minimap (GetMinimapShape, which libraries for minimap buttons ask as well): the icons sit on its edge.
+    local function squareMap()
+        local shape = _G.GetMinimapShape
+        if type(shape) ~= "function" then return false end
+        local ok, value = pcall(shape)
+        return ok and value == "SQUARE"
+    end
+
+    -- The point where the ray from the middle of the map at `angle` meets the edge, pulled in by half the icon, so that the
+    -- icon touches the edge from inside (a map flush with the screen edge does not cut it off). Dragging keeps measuring
+    -- the angle from the middle, so the icon slides along the edge and around the corners.
+    local function edgePoint(map, angle, size)
+        local halfW, halfH = map:GetWidth() / 2 - size / 2, map:GetHeight() / 2 - size / 2
+        local c, s = math.cos(angle), math.sin(angle)
+        local reach = math.huge
+        if math.abs(c) > 1e-9 then reach = math.min(reach, halfW / math.abs(c)) end
+        if math.abs(s) > 1e-9 then reach = math.min(reach, halfH / math.abs(s)) end
+        if reach == math.huge then reach = 0 end
+        return c * reach, s * reach
+    end
+
     -- Round minimap button used by the ZENIAL icon and by addons with an icon of their own, so
     -- size, look and dragging stay the same. options: name, icon, defaultAngle, getAngle, setAngle,
     -- onClick(button, mouseButton), tooltip(GameTooltip).
@@ -236,12 +258,18 @@ if (tonumber(hub.version) or 0) < HUB_VERSION then
         highlight:AddMaskTexture(mask)
 
         function button.Reposition()
-            local radius, measured = orbitRadius(map)
             local angle = math.rad(options.getAngle() or options.defaultAngle)
             button:ClearAllPoints()
+            if squareMap() then
+                local x, y = edgePoint(map, angle, button:GetWidth())
+                button:SetPoint("CENTER", map, "CENTER", x, y)
+                return true
+            end
+            local radius, measured = orbitRadius(map)
             button:SetPoint("CENTER", map, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)
             return measured
         end
+        hub.buttons[#hub.buttons + 1] = button
         button:SetScript("OnClick", function(self, mouseButton) options.onClick(self, mouseButton) end)
         button:SetScript("OnEnter", function(self)
             local tip = _G.GameTooltip
@@ -276,6 +304,13 @@ if (tonumber(hub.version) or 0) < HUB_VERSION then
         end)
         button.Reposition()
         return button
+    end
+
+    -- Every icon placed again (the minimap changed its shape).
+    function hub.RepositionAll()
+        for _, button in ipairs(hub.buttons) do
+            pcall(button.Reposition)
+        end
     end
 
     -- Creates the ZENIAL icon once and returns it; nil while there is no minimap or no addon.
