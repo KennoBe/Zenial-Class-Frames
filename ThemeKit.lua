@@ -24,6 +24,9 @@
 --   K.InfoBlock(list)                             a list that only shows facts: no sunken well, reads as plain text
 --   K.Lines(text[, firstKey, restKey])            multi-line row text: first line bright, the lines below receding
 --   K.Facts(text)                                 multi-line facts: "Label: value" lines get a dimmed label
+--   K.ProgressBar(parent, opts)                   thin bar {width, height, tone}; :SetValue(current, maximum), :SetTone(tone)
+--   K.ItemSlot(parent[, size])                    item button; :SetItem{itemID, icon, count, quality}, :SetEmpty(), :SetOnClick(fn)
+--   K.Columns(width, minWidth, gap, maxColumns)   pure layout maths: columns, columnWidth
 local addonName, private = ...
 local T = type(private) == "table" and private.Theme or nil
 if type(addonName) ~= "string" or type(T) ~= "table" or type(T.Font) ~= "function" then return end
@@ -409,6 +412,119 @@ function K.Segmented(parent, items, onSelect)
     layout()
     if items and items[1] then seg:Select(items[1].key) end
     return seg
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Progress bar: a sunken track with a fill drawn as a gradient. opts = { width, height = 6, tone = "gold" }.
+-- :SetValue(current, maximum) (missing or non-positive values leave the bar empty), :SetTone(tone).
+-- ---------------------------------------------------------------------------------------------
+local BAR_TONES = {
+    gold = { "goldFillTop", "goldFillBottom" }, success = { "success", "success" },
+    info = { "accentBlue", "accentBlue" }, dim = { "dim", "dim" },
+}
+function K.ProgressBar(parent, opts)
+    opts = opts or {}
+    local bar = CreateFrame("Frame", nil, parent)
+    bar.zenialBarWidth = opts.width or 120
+    bar:SetSize(bar.zenialBarWidth, opts.height or 6)
+    bar.track = bar:CreateTexture(nil, "BACKGROUND")
+    bar.track:SetAllPoints()
+    T.Tint(bar.track, "SetColorTexture", "inset")
+    bar.fill = bar:CreateTexture(nil, "ARTWORK")
+    bar.fill:SetPoint("TOPLEFT", 0, 0); bar.fill:SetPoint("BOTTOMLEFT", 0, 0)
+    bar.fill:SetWidth(1); bar.fill:Hide()
+    function bar:SetTone(tone)
+        local spec = BAR_TONES[tone] or BAR_TONES.gold
+        self.zenialTone = BAR_TONES[tone] and tone or "gold"
+        if spec[1] == spec[2] then T.Tint(self.fill, "SetColorTexture", spec[1])
+        else T.SetGradient(self.fill, "VERTICAL", spec[1], spec[2]) end
+    end
+    function bar:SetBarWidth(width)
+        self.zenialBarWidth = width; self:SetWidth(width)
+        if self.zenialCurrent then self:SetValue(self.zenialCurrent, self.zenialMaximum) end
+    end
+    function bar:SetValue(current, maximum)
+        self.zenialCurrent, self.zenialMaximum = current, maximum
+        if type(current) ~= "number" or type(maximum) ~= "number" or maximum <= 0 or current <= 0 then
+            self.fill:Hide(); return
+        end
+        local width = math.floor(self.zenialBarWidth * math.min(1, current / maximum) + .5)
+        if width < 1 then self.fill:Hide(); return end
+        self.fill:SetWidth(width); self.fill:Show()
+    end
+    bar:SetTone(opts.tone or "gold")
+    return bar
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- Item slot: icon, stack count bottom right (only above 1), quality frame when the quality is known, item tooltip
+-- on hover. :SetItem{ itemID, icon, count, quality }, :SetEmpty(), :SetOnClick(fn).
+-- ---------------------------------------------------------------------------------------------
+local function qualityColor(quality)
+    if type(quality) ~= "number" then return nil end
+    if C_Item and type(C_Item.GetItemQualityColor) == "function" then
+        local ok, r, g, b = pcall(C_Item.GetItemQualityColor, quality)
+        if ok and type(r) == "number" then return r, g, b end
+    end
+    local entry = type(ITEM_QUALITY_COLORS) == "table" and ITEM_QUALITY_COLORS[quality]
+    if type(entry) == "table" and type(entry.r) == "number" then return entry.r, entry.g, entry.b end
+    return nil
+end
+function K.ItemSlot(parent, size)
+    size = size or 36
+    local slot = CreateFrame("Button", nil, parent)
+    slot:SetSize(size, size)
+    slot.back = slot:CreateTexture(nil, "BACKGROUND"); slot.back:SetAllPoints()
+    T.Tint(slot.back, "SetColorTexture", "inset")
+    slot.edges = T.Edges(slot, "BORDER")
+    T.TintEdges(slot.edges, "lineSoft")
+    slot.icon = slot:CreateTexture(nil, "ARTWORK")
+    slot.icon:SetPoint("TOPLEFT", 1, -1); slot.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+    slot.icon:Hide()
+    slot.count = K.Text(slot, "", "caption", "text")
+    slot.count:SetPoint("BOTTOMRIGHT", -2, 2); slot.count:SetJustifyH("RIGHT")
+    slot.count:Hide()
+    slot.hover = slot:CreateTexture(nil, "HIGHLIGHT"); slot.hover:SetAllPoints()
+    T.Tint(slot.hover, "SetColorTexture", "hover", .12)
+    function slot:SetEmpty()
+        self.zenialItemID = nil
+        self.icon:Hide(); self.count:SetText(""); self.count:Hide()
+        T.TintEdges(self.edges, "lineSoft")
+    end
+    function slot:SetItem(item)
+        if type(item) ~= "table" then return self:SetEmpty() end
+        self.zenialItemID = item.itemID
+        if item.icon ~= nil then self.icon:SetTexture(item.icon) end
+        self.icon:Show()
+        local count = tonumber(item.count)
+        if count and count > 1 then self.count:SetText(tostring(count)); self.count:Show()
+        else self.count:SetText(""); self.count:Hide() end
+        local r, g, b = qualityColor(item.quality)
+        if r then
+            for _, edge in pairs(self.edges) do if edge.SetColorTexture then edge:SetColorTexture(r, g, b, 1) end end
+        else
+            T.TintEdges(self.edges, "lineSoft")
+        end
+    end
+    function slot:SetOnClick(fn) self:SetScript("OnClick", fn or function() end) end
+    slot:SetScript("OnEnter", function(self)
+        local id = self.zenialItemID
+        if not id or not GameTooltip or not GameTooltip.SetOwner then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        if GameTooltip.SetItemByID then pcall(GameTooltip.SetItemByID, GameTooltip, id) end
+        if GameTooltip.Show then GameTooltip:Show() end
+    end)
+    slot:SetScript("OnLeave", function() if GameTooltip and GameTooltip.Hide then GameTooltip:Hide() end end)
+    return slot
+end
+
+-- Number of columns of at most maxColumns that fit `width` with `minWidth` per column and `gap` between them
+-- (at least one), and the resulting column width (rounded down).
+function K.Columns(width, minWidth, gap, maxColumns)
+    width, minWidth, gap = tonumber(width) or 0, math.max(1, tonumber(minWidth) or 1), tonumber(gap) or 0
+    local columns = math.floor((width + gap) / (minWidth + gap))
+    columns = math.max(1, math.min(columns, math.max(1, tonumber(maxColumns) or columns)))
+    return columns, math.floor((width - (columns - 1) * gap) / columns)
 end
 
 -- ---------------------------------------------------------------------------------------------
