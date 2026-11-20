@@ -419,7 +419,7 @@ end
 -- :SetValue(current, maximum) (missing or non-positive values leave the bar empty), :SetTone(tone).
 -- ---------------------------------------------------------------------------------------------
 local BAR_TONES = {
-    gold = { "goldFillTop", "goldFillBottom" }, success = { "success", "success" },
+    gold = { "primaryTop", "primaryBottom" }, success = { "success", "success" },
     info = { "accentBlue", "accentBlue" }, dim = { "dim", "dim" },
 }
 function K.ProgressBar(parent, opts)
